@@ -1,0 +1,331 @@
+<%+header%>
+
+<%
+local subs = subs or {}
+local base = luci.dispatcher.build_url("admin","services","dpi-rip")
+%>
+
+<style>
+.dpr-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+.dpr-card h3 {
+    margin: 0 0 16px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+.dpr-sub-item {
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    background: #fafafa;
+    position: relative;
+}
+.dpr-sub-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #2c3e50;
+    margin-bottom: 6px;
+}
+.dpr-sub-url {
+    font-size: 12px;
+    color: #888;
+    word-break: break-all;
+    margin-bottom: 8px;
+    font-family: monospace;
+}
+.dpr-sub-meta {
+    display: flex;
+    gap: 18px;
+    font-size: 13px;
+    color: #555;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+    align-items: center;
+}
+.dpr-bar-wrap {
+    display: inline-block;
+    width: 140px;
+    height: 8px;
+    background: #ddd;
+    border-radius: 4px;
+    vertical-align: middle;
+    overflow: hidden;
+}
+.dpr-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+.dpr-sub-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.dpr-btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+}
+.dpr-btn-blue  { background: #3498db; }
+.dpr-btn-blue:hover { background: #2980b9; }
+.dpr-btn-red   { background: #e74c3c; }
+.dpr-btn-red:hover { background: #c0392b; }
+.dpr-btn-green { background: #27ae60; }
+.dpr-btn-green:hover { background: #219a52; }
+.dpr-btn:disabled { background: #95a5a6; cursor: default; }
+.dpr-input {
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.dpr-input:focus { border-color: #3498db; outline: none; }
+.dpr-log-box {
+    background: #1a1a2e;
+    color: #a8ff78;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 10px 14px;
+    border-radius: 4px;
+    margin-top: 10px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 150px;
+    overflow-y: auto;
+    display: none;
+}
+.dpr-spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #ccc;
+    border-top-color: #3498db;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.dpr-empty {
+    text-align: center;
+    padding: 30px;
+    color: #888;
+    font-size: 15px;
+}
+</style>
+
+<h2><%:DPI-RIP — Subscriptions%></h2>
+
+<!-- ── Add subscription ── -->
+<div class="dpr-card">
+    <h3><%:Add Subscription%></h3>
+    <div style="display:flex;gap:10px;align-items:flex-start">
+        <div style="flex:1">
+            <input type="text" id="add-url" class="dpr-input"
+                placeholder="https://example.com/subscription-url"
+                onkeydown="if(event.key==='Enter')dprAddSub()">
+        </div>
+        <button class="dpr-btn dpr-btn-green" onclick="dprAddSub()" id="add-btn">
+            &#43; <%:Add &amp; Fetch%>
+        </button>
+    </div>
+    <div id="add-log" class="dpr-log-box"></div>
+</div>
+
+<!-- ── Subscription list ── -->
+<% if #subs == 0 then %>
+<div class="dpr-card">
+    <div class="dpr-empty">
+        <%:No subscriptions yet. Add one above.%>
+    </div>
+</div>
+<% else %>
+<div class="dpr-card">
+    <h3><%:My Subscriptions%></h3>
+
+    <% for _, sub in ipairs(subs) do
+        local info = sub.info
+        local pct  = (info and info.used_pct) or 0
+        local bar_color = pct > 90 and '#e74c3c' or pct > 70 and '#f39c12' or '#27ae60'
+    %>
+    <div class="dpr-sub-item" id="sub-<%=sub.id%>">
+
+        <div class="dpr-sub-title" id="title-<%=sub.id%>">
+            <%=luci.util.pcdata(sub.title)%>
+        </div>
+
+        <div class="dpr-sub-url"><%=luci.util.pcdata(sub.url)%></div>
+
+        <div class="dpr-sub-meta">
+            <span id="count-<%=sub.id%>">
+                &#128290; <strong><%=sub.count%></strong> <%:servers%>
+            </span>
+            <% if info and info.expire_str ~= "" then %>
+            <span>&#128197; <%=luci.util.pcdata(info.expire_str)%></span>
+            <% end %>
+            <% if info and info.used_fmt ~= "" then %>
+            <span>
+                <%=luci.util.pcdata(info.used_fmt)%> / <%=luci.util.pcdata(info.total_fmt)%>
+                &nbsp;
+                <span class="dpr-bar-wrap">
+                    <span class="dpr-bar-fill"
+                        style="width:<%=math.min(pct,100)%>%;background:<%=bar_color%>">
+                    </span>
+                </span>
+                &nbsp;<small><%=string.format("%.1f", pct)%>%</small>
+            </span>
+            <% end %>
+        </div>
+
+        <div class="dpr-sub-actions">
+            <button class="dpr-btn dpr-btn-blue"
+                    onclick="dprRefresh('<%=sub.id%>')"
+                    id="refresh-<%=sub.id%>">
+                &#8635; <%:Refresh%>
+            </button>
+            <button class="dpr-btn dpr-btn-red"
+                    onclick="dprDelete('<%=sub.id%>', '<%=luci.util.pcdata(sub.title)%>')">
+                &#10005; <%:Delete%>
+            </button>
+            <span id="status-<%=sub.id%>" style="font-size:13px;color:#27ae60;display:none"></span>
+        </div>
+
+        <div class="dpr-log-box" id="log-<%=sub.id%>"></div>
+    </div>
+    <% end %>
+</div>
+<% end %>
+
+<div style="margin-top:8px;font-size:14px">
+    <a href="<%=base%>/overview">&#8592; <%:Back to Overview%></a>
+</div>
+
+<script>
+var DPR_BASE = '<%=base%>';
+
+function dprEsc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function dprShowLog(id, text) {
+    var el = document.getElementById('log-' + id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.display = text ? 'block' : 'none';
+}
+
+function dprSetStatus(id, msg, color) {
+    var el = document.getElementById('status-' + id);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = color || '#27ae60';
+    el.style.display = msg ? 'inline' : 'none';
+}
+
+// Add new subscription
+function dprAddSub() {
+    var url = document.getElementById('add-url').value.trim();
+    if (!url) { alert('<%:Please enter a subscription URL%>'); return; }
+
+    var btn     = document.getElementById('add-btn');
+    var logBox  = document.getElementById('add-log');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dpr-spinner"></span> <%:Fetching...%>';
+    logBox.style.display = 'none';
+
+    var fd = new FormData();
+    fd.append('url', url);
+
+    fetch(DPR_BASE + '/add_sub', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            logBox.textContent = d.log || '';
+            logBox.style.display = d.log ? 'block' : 'none';
+            if (d.ok) {
+                document.getElementById('add-url').value = '';
+                // Reload page to show the new subscription
+                setTimeout(function(){ location.reload(); }, 800);
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = '+ <%:Add &amp; Fetch%>';
+            }
+        })
+        .catch(function(e) {
+            logBox.textContent = 'Error: ' + e;
+            logBox.style.display = 'block';
+            btn.disabled = false;
+            btn.innerHTML = '+ <%:Add &amp; Fetch%>';
+        });
+}
+
+// Refresh existing subscription
+function dprRefresh(subId) {
+    var btn = document.getElementById('refresh-' + subId);
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dpr-spinner"></span>';
+    dprSetStatus(subId, '');
+    dprShowLog(subId, '');
+
+    var fd = new FormData();
+    fd.append('sub_id', subId);
+
+    fetch(DPR_BASE + '/fetch_sub', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            btn.disabled = false;
+            btn.innerHTML = '&#8635; <%:Refresh%>';
+
+            dprShowLog(subId, d.log || '');
+
+            if (d.ok) {
+                // Update title and count inline
+                var titleEl = document.getElementById('title-' + subId);
+                if (titleEl && d.title) titleEl.textContent = d.title;
+                var countEl = document.getElementById('count-' + subId);
+                if (countEl) countEl.innerHTML = '&#128290; <strong>' + d.count + '</strong> <%:servers%>';
+                dprSetStatus(subId, '&#10003; <%:Updated — %>' + d.count + ' <%:servers%>', '#27ae60');
+            } else {
+                dprSetStatus(subId, '&#10007; <%:Fetch failed%>', '#e74c3c');
+            }
+        })
+        .catch(function(e) {
+            btn.disabled = false;
+            btn.innerHTML = '&#8635; <%:Refresh%>';
+            dprSetStatus(subId, 'Error: ' + e, '#e74c3c');
+        });
+}
+
+// Delete subscription
+function dprDelete(subId, title) {
+    if (!confirm('<%:Delete subscription "%s"?%>'.replace('%s', title))) return;
+
+    var fd = new FormData();
+    fd.append('sub_id', subId);
+
+    fetch(DPR_BASE + '/del_sub', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                var el = document.getElementById('sub-' + subId);
+                if (el) el.remove();
+            }
+        });
+}
+</script>
+
+<%+footer%>

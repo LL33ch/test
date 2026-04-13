@@ -1,164 +1,216 @@
 <%+header%>
 
-<h2>DPI-RIP</h2>
-
 <%
 local cfg     = cfg or {}
-local servers = cfg.servers or {}
+local subs    = cfg.subs or {}
+local base    = luci.dispatcher.build_url("admin","services","dpi-rip")
+
+-- Count total servers across all subscriptions
+local total_servers = 0
+for _, sub in ipairs(subs) do
+    total_servers = total_servers + sub.count
+end
 %>
 
-<div class="cbi-map">
+<style>
+.dpr-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+.dpr-card h3 {
+    margin: 0 0 16px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+}
+.dpr-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.dpr-label {
+    min-width: 120px;
+    font-weight: 600;
+    color: #555;
+    font-size: 14px;
+}
+.dpr-value { flex: 1; font-size: 14px; }
+.dpr-running { color: #27ae60; font-weight: 700; }
+.dpr-stopped { color: #e74c3c; font-weight: 700; }
+.dpr-btn {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+}
+.dpr-btn-green  { background: #27ae60; }
+.dpr-btn-green:hover { background: #219a52; }
+.dpr-btn-red    { background: #e74c3c; }
+.dpr-btn-red:hover { background: #c0392b; }
+.dpr-btn-blue   { background: #3498db; }
+.dpr-btn-blue:hover { background: #2980b9; }
+.dpr-btn-gray   { background: #95a5a6; }
+.dpr-select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    background: #fafafa;
+}
+.dpr-select:focus { border-color: #3498db; outline: none; }
+.dpr-toggle-wrap { display: flex; align-items: center; gap: 10px; }
+.dpr-notice {
+    background: #fef9e7;
+    border: 1px solid #f0c040;
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #7d6608;
+}
+.dpr-notice a { color: #2980b9; font-weight: 600; }
+</style>
 
-  <!-- ── Статус ── -->
-  <div class="cbi-section">
-    <h3 class="cbi-section-legend"><%:Status%></h3>
-    <div class="cbi-section-node">
-      <div class="cbi-value">
-        <label class="cbi-value-title"><%:Service%></label>
-        <div class="cbi-value-field">
-          <% if cfg.running then %>
-            <span style="color:#27ae60"><strong>&#9679; <%:Running%></strong>
-            <% if cfg.pid ~= "" then %>(PID: <%=cfg.pid%>)<% end %></span>
-          <% else %>
-            <span style="color:#e74c3c"><strong>&#9679; <%:Stopped%></strong></span>
-          <% end %>
-        </div>
-      </div>
-      <% if cfg.active_remarks ~= "" then %>
-      <div class="cbi-value">
-        <label class="cbi-value-title"><%:Active Server%></label>
-        <div class="cbi-value-field"><strong><%=cfg.active_remarks%></strong></div>
-      </div>
-      <% end %>
-    </div>
-  </div>
+<h2>DPI-RIP</h2>
 
-  <!-- ── Информация о подписке ── -->
-  <% if cfg.sub_info and cfg.sub_info.title ~= "" then
-     local i = cfg.sub_info %>
-  <div class="cbi-section">
-    <h3 class="cbi-section-legend"><%=i.title%></h3>
-    <div class="cbi-section-node">
+<!-- ── Status ── -->
+<div class="dpr-card">
+    <h3><%:Status%></h3>
 
-      <% if i.expire_str ~= "" then %>
-      <div class="cbi-value">
-        <label class="cbi-value-title"><%:Expires%></label>
-        <div class="cbi-value-field"><strong><%=i.expire_str%></strong></div>
-      </div>
-      <% end %>
-
-      <% if i.used_fmt ~= "" then %>
-      <div class="cbi-value">
-        <label class="cbi-value-title"><%:Traffic Used%></label>
-        <div class="cbi-value-field">
-          <%=i.used_fmt%> / <%=i.total_fmt%>
-          <% if i.used_pct > 0 then %>
-          &nbsp;
-          <div style="display:inline-block;width:200px;height:10px;background:#ddd;border-radius:4px;vertical-align:middle">
-            <div style="width:<%=math.min(i.used_pct,100)%>%;height:100%;border-radius:4px;background:<%=i.used_pct>90 and '#e74c3c' or i.used_pct>70 and '#f39c12' or '#27ae60'%>"></div>
-          </div>
-          &nbsp;<small><%=i.used_pct%>%</small>
-          <% end %>
-        </div>
-      </div>
-      <% end %>
-
-    </div>
-  </div>
-  <% end %>
-
-  <!-- ── Подписка ── -->
-  <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','overview')%>">
-    <input type="hidden" name="token"  value="<%=token%>">
-    <input type="hidden" name="action" value="fetch">
-
-    <div class="cbi-section">
-      <h3 class="cbi-section-legend"><%:Subscription%></h3>
-      <div class="cbi-section-node">
-        <div class="cbi-value">
-          <label class="cbi-value-title"><%:Subscription URL%></label>
-          <div class="cbi-value-field">
-            <input type="text" name="sub_url" class="cbi-input-text"
-              style="width:100%" value="<%=cfg.sub_url%>"
-              placeholder="https://...">
-          </div>
-        </div>
-        <% if cfg.fetch_log ~= "" then %>
-        <div class="cbi-value">
-          <label class="cbi-value-title"><%:Last fetch%></label>
-          <div class="cbi-value-field">
-            <code><%=cfg.fetch_log%></code>
-          </div>
-        </div>
-        <% end %>
-      </div>
-    </div>
-
-    <div class="cbi-page-actions">
-      <input type="submit" class="cbi-button cbi-button-apply"
-        value="&#8635; <%:Fetch Servers%>">
-    </div>
-  </form>
-
-  <!-- ── Выбор сервера + настройки ── -->
-  <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','overview')%>">
-    <input type="hidden" name="token"  value="<%=token%>">
-    <input type="hidden" name="action" value="save">
-
-    <div class="cbi-section">
-      <h3 class="cbi-section-legend"><%:Server & Settings%></h3>
-      <div class="cbi-section-node">
-
-        <!-- Список серверов -->
-        <div class="cbi-value">
-          <label class="cbi-value-title"><%:Enable%></label>
-          <div class="cbi-value-field">
-            <input type="hidden"   name="enabled" value="0">
-            <input type="checkbox" name="enabled" value="1"<%=cfg.enabled=="1" and ' checked' or ''%>>
-          </div>
-        </div>
-
-        <div class="cbi-value">
-          <label class="cbi-value-title"><%:Server%></label>
-          <div class="cbi-value-field">
-            <% if #servers == 0 then %>
-              <em style="color:#888"><%:No servers — fetch subscription first%></em>
-              <input type="hidden" name="active_remarks" value="">
+    <div class="dpr-row">
+        <span class="dpr-label"><%:Service%></span>
+        <span class="dpr-value" id="dpr-status-text">
+            <% if cfg.running then %>
+                <span class="dpr-running">&#9679; <%:Running%>
+                <% if cfg.pid and cfg.pid ~= "" then %>(PID <%=cfg.pid%>)<% end %>
+                </span>
             <% else %>
-              <select name="active_remarks" class="cbi-input-select" style="width:100%">
-                <% for _, s in ipairs(servers) do %>
-                <option value="<%=s.remarks%>"<%=s.remarks==cfg.active_remarks and ' selected' or ''%>>
-                  [<%=s.protocol%>] <%=s.remarks%>
-                </option>
-                <% end %>
-              </select>
+                <span class="dpr-stopped">&#9679; <%:Stopped%></span>
             <% end %>
-          </div>
-        </div>
-
-        <div class="cbi-value">
-          <label class="cbi-value-title"><%:Proxy Mode%></label>
-          <div class="cbi-value-field">
-            <select name="proxy_mode" class="cbi-input-select">
-              <option value="tproxy"<%=cfg.proxy_mode=="tproxy" and ' selected' or ''%>>
-                <%:Transparent Proxy (TProxy) — intercept all LAN traffic%>
-              </option>
-              <option value="none"<%=cfg.proxy_mode=="none" and ' selected' or ''%>>
-                <%:None — SOCKS5 only (port 10808)%>
-              </option>
-            </select>
-          </div>
-        </div>
-
-      </div>
+        </span>
+        <button id="dpr-toggle-btn" class="dpr-btn <%=cfg.running and 'dpr-btn-red' or 'dpr-btn-green'%>"
+                onclick="dprToggle()">
+            <%=cfg.running and translate("Stop") or translate("Start")%>
+        </button>
     </div>
 
-    <div class="cbi-page-actions">
-      <input type="submit" class="cbi-button cbi-button-save"
-        value="<%:Save & Restart%>">
+    <% if cfg.active_sub and cfg.active_sub ~= "" and cfg.active_remarks and cfg.active_remarks ~= "" then %>
+    <div class="dpr-row">
+        <span class="dpr-label"><%:Active Server%></span>
+        <span class="dpr-value"><strong><%=cfg.active_remarks%></strong></span>
     </div>
-  </form>
-
+    <% end %>
 </div>
+
+<!-- ── Server & Settings ── -->
+<form method="post" action="<%=base%>/overview">
+    <input type="hidden" name="token" value="<%=token%>">
+
+    <div class="dpr-card">
+        <h3><%:Server &amp; Settings%></h3>
+
+        <% if total_servers == 0 then %>
+        <div class="dpr-notice">
+            <%:No servers yet.%>
+            <a href="<%=base%>/subs"><%:Add a subscription &rarr;%></a>
+        </div>
+        <% else %>
+
+        <!-- Enable -->
+        <div class="dpr-row">
+            <span class="dpr-label"><%:Enable%></span>
+            <span class="dpr-value dpr-toggle-wrap">
+                <input type="hidden"   name="enabled" value="0">
+                <input type="checkbox" name="enabled" value="1"
+                    id="dpr-enabled"<%=cfg.enabled=="1" and ' checked' or ''%>
+                    onchange="this.previousElementSibling.disabled=this.checked">
+                <label for="dpr-enabled" style="font-size:14px"><%:Start proxy on save%></label>
+            </span>
+        </div>
+
+        <!-- Proxy mode -->
+        <div class="dpr-row">
+            <span class="dpr-label"><%:Proxy Mode%></span>
+            <span class="dpr-value">
+                <select name="proxy_mode" class="dpr-select" style="width:auto">
+                    <option value="tproxy"<%=cfg.proxy_mode=="tproxy" and ' selected' or ''%>>
+                        <%:Transparent (TProxy) — intercept all LAN traffic%>
+                    </option>
+                    <option value="none"<%=cfg.proxy_mode=="none" and ' selected' or ''%>>
+                        <%:None — SOCKS5 :10808 only%>
+                    </option>
+                </select>
+            </span>
+        </div>
+
+        <!-- Server selector grouped by subscription -->
+        <div class="dpr-row">
+            <span class="dpr-label"><%:Server%></span>
+            <span class="dpr-value">
+                <select name="active" class="dpr-select">
+                    <option value="">— <%:select a server%> —</option>
+                    <% for _, sub in ipairs(subs) do
+                       if sub.count > 0 then %>
+                    <optgroup label="<%=luci.util.pcdata(sub.title)%> (<%=sub.count%>)">
+                        <% for _, srv in ipairs(sub.servers) do
+                            local val   = sub.id .. "|" .. srv.remarks
+                            local sel   = (sub.id == cfg.active_sub and srv.remarks == cfg.active_remarks)
+                                          and ' selected' or ''
+                        %>
+                        <option value="<%=luci.util.pcdata(val)%>"<%=sel%>>
+                            [<%=srv.protocol%>] <%=luci.util.pcdata(srv.remarks)%>
+                        </option>
+                        <% end %>
+                    </optgroup>
+                    <% end
+                       end %>
+                </select>
+            </span>
+        </div>
+
+        <% end %>
+    </div>
+
+    <% if total_servers > 0 then %>
+    <div style="text-align:right;margin-bottom:16px">
+        <input type="submit" class="dpr-btn dpr-btn-blue"
+            value="<%:Save &amp; Restart%>">
+    </div>
+    <% end %>
+</form>
+
+<!-- ── Quick link to subscriptions ── -->
+<div style="font-size:14px;color:#666">
+    <a href="<%=base%>/subs">&#8594; <%:Manage subscriptions%>
+    <% if #subs > 0 then %>(<%=#subs%>)<% end %>
+    </a>
+</div>
+
+<script>
+var DPR_BASE = '<%=base%>';
+
+function dprToggle() {
+    var btn = document.getElementById('dpr-toggle-btn');
+    btn.disabled = true;
+    btn.textContent = '...';
+    fetch(DPR_BASE + '/toggle', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            // Reload page after short delay to reflect new state
+            setTimeout(function(){ location.reload(); }, 1200);
+        })
+        .catch(function(){ btn.disabled = false; });
+}
+</script>
 
 <%+footer%>

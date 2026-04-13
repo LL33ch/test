@@ -1,22 +1,32 @@
 {
   "luci-app-dpi-rip": {
-    "description": "Grant unauthenticated access to DPI-RIP LuCI app",
+    "description": "DPI-RIP proxy manager",
     "read": {
-      "uci": [ "dpi-rip" ],
+      "uci":  [ "dpi-rip" ],
       "ubus": {
         "luci-rpc": [ "getGroupMembers" ],
-        "session": [ "access", "list" ]
+        "session":  [ "access", "list" ]
       },
       "file": {
         "/var/log/dpi-rip*": [ "read" ],
-        "/etc/dpi-rip/*":    [ "read" ]
+        "/etc/dpi-rip/*":    [ "read" ],
+        "/tmp/dpi-rip*":     [ "read" ]
       }
     },
     "write": {
-      "uci": [ "dpi-rip" ],
+      "uci":  [ "dpi-rip" ],
       "file": {
-        "/etc/dpi-rip/*": [ "write" ]
+        "/etc/dpi-rip/*": [ "write" ],
+        "/tmp/dpi-rip*":  [ "write" ]
       }
+    },
+    "execute": {
+      "shell": [
+        "/usr/bin/dpi-rip-fetch.sh",
+        "/usr/bin/dpi-rip-gen.sh",
+        "/usr/bin/dpi-rip-list.sh",
+        "/etc/init.d/dpi-rip"
+      ]
     }
   }
 }

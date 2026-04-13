@@ -1,31 +1,41 @@
--- DPI-RIP LuCI Controller (subscription-based)
--- Работает на любой версии OpenWRT: только call() + template(), без luci.cbi
+-- DPI-RIP LuCI Controller
+-- Compatible with all OpenWRT versions: uses only call() + template(), no luci.cbi
+-- Supports multiple subscriptions
 
 module("luci.controller.dpi_rip", package.seeall)
 
 function index()
     if not nixio.fs.access("/etc/config/dpi-rip") then return end
 
-    local page = entry(
+    local root = entry(
         {"admin", "services", "dpi-rip"},
         alias("admin", "services", "dpi-rip", "overview"),
         _("DPI-RIP"), 60
     )
-    page.dependent = true
-    page.acl_depends = { "luci-app-dpi-rip" }
+    root.dependent  = true
+    root.acl_depends = { "luci-app-dpi-rip" }
 
     entry({"admin", "services", "dpi-rip", "overview"},
         call("action_overview"), _("Overview"), 10)
 
-    entry({"admin", "services", "dpi-rip", "log"},
-        call("action_log"), _("Log"), 20)
+    entry({"admin", "services", "dpi-rip", "subs"},
+        call("action_subs"), _("Subscriptions"), 20)
 
-    -- AJAX
+    entry({"admin", "services", "dpi-rip", "log"},
+        call("action_log"), _("Log"), 30)
+
+    -- AJAX endpoints
     entry({"admin", "services", "dpi-rip", "status"},
         call("action_status")).leaf = true
 
     entry({"admin", "services", "dpi-rip", "toggle"},
         call("action_toggle")).leaf = true
+
+    entry({"admin", "services", "dpi-rip", "add_sub"},
+        call("action_add_sub")).leaf = true
+
+    entry({"admin", "services", "dpi-rip", "del_sub"},
+        call("action_del_sub")).leaf = true
 
     entry({"admin", "services", "dpi-rip", "fetch_sub"},
         call("action_fetch_sub")).leaf = true
@@ -38,7 +48,7 @@ function index()
 end
 
 -- ================================================================
--- Overview
+-- Overview page: status + server selection
 -- ================================================================
 function action_overview()
     local http = require "luci.http"
@@ -46,56 +56,59 @@ function action_overview()
     local sys  = require "luci.sys"
 
     if http.getenv("REQUEST_METHOD") == "POST" then
-        local action = http.formvalue("action") or "save"
+        -- Save active server + settings, then restart
+        local combined   = http.formvalue("active") or ""
+        local proxy_mode = http.formvalue("proxy_mode") or "tproxy"
+        local enabled    = http.formvalue("enabled") or "0"
 
-        if action == "fetch" then
-            -- Сохраняем URL и запускаем fetch
-            local sub_url = (http.formvalue("sub_url") or ""):gsub("%s+", "")
-            uci:set("dpi-rip", "main", "sub_url", sub_url)
-            uci:save("dpi-rip")
-            uci:commit("dpi-rip")
-            sys.exec("/usr/bin/dpi-rip-fetch.sh > /tmp/dpi-rip-fetch.log 2>&1")
+        -- Value format: "sub_id|remarks" (see overview.htm <option> values)
+        local sub_id = combined:match("^([^|]*)|") or ""
+        local remarks = combined:match("^[^|]*|(.+)") or ""
 
-        elseif action == "save" then
-            local remarks    = http.formvalue("active_remarks") or ""
-            local proxy_mode = http.formvalue("proxy_mode") or "tproxy"
-            local enabled    = http.formvalue("enabled") or "0"
+        uci:set("dpi-rip", "main", "active_sub",     sub_id)
+        uci:set("dpi-rip", "main", "active_remarks", remarks)
+        uci:set("dpi-rip", "main", "proxy_mode",     proxy_mode)
+        uci:set("dpi-rip", "main", "enabled",        enabled)
+        uci:save("dpi-rip")
+        uci:commit("dpi-rip")
 
-            uci:set("dpi-rip", "main", "active_remarks", remarks)
-            uci:set("dpi-rip", "main", "proxy_mode",     proxy_mode)
-            uci:set("dpi-rip", "main", "enabled",        enabled)
-            uci:save("dpi-rip")
-            uci:commit("dpi-rip")
+        if enabled == "1" then
             sys.exec("/etc/init.d/dpi-rip restart &")
+        else
+            sys.exec("/etc/init.d/dpi-rip stop &")
         end
 
         http.redirect(luci.dispatcher.build_url("admin", "services", "dpi-rip", "overview"))
         return
     end
 
-    -- Данные для шаблона
     local cfg = {
-        sub_url        = uci:get("dpi-rip", "main", "sub_url")        or "",
+        active_sub     = uci:get("dpi-rip", "main", "active_sub")     or "",
         active_remarks = uci:get("dpi-rip", "main", "active_remarks") or "",
         proxy_mode     = uci:get("dpi-rip", "main", "proxy_mode")     or "tproxy",
         enabled        = uci:get("dpi-rip", "main", "enabled")        or "0",
     }
 
-    local pid = sys.exec("pgrep -f 'xray run' | head -1"):gsub("%s+", "")
+    local pid = (sys.exec("pgrep -f 'xray run' 2>/dev/null | head -1") or ""):gsub("%s+", "")
     cfg.running = (pid ~= "")
     cfg.pid     = pid
-
-    -- Читаем список серверов и мета-информацию подписки
-    cfg.servers  = load_servers()
-    cfg.sub_info = load_sub_info()
-    cfg.fetch_log = sys.exec("cat /tmp/dpi-rip-fetch.log 2>/dev/null") or ""
+    cfg.subs    = load_all_subs()
 
     local token = http.formtoken and http.formtoken() or ""
     luci.template.render("dpi_rip/overview", { cfg = cfg, token = token })
 end
 
 -- ================================================================
--- Log
+-- Subscriptions management page
+-- ================================================================
+function action_subs()
+    local http  = require "luci.http"
+    local token = http.formtoken and http.formtoken() or ""
+    luci.template.render("dpi_rip/subs", { subs = load_all_subs(), token = token })
+end
+
+-- ================================================================
+-- Log viewer page
 -- ================================================================
 function action_log()
     local http  = require "luci.http"
@@ -104,14 +117,15 @@ function action_log()
 end
 
 -- ================================================================
--- AJAX: статус
+-- AJAX: status
 -- ================================================================
 function action_status()
     local sys = require "luci.sys"
     local uci = require "luci.model.uci".cursor()
 
-    local pid     = sys.exec("pgrep -f 'xray run' | head -1"):gsub("%s+", "")
-    local enabled = uci:get("dpi-rip", "main", "enabled") or "0"
+    local pid     = (sys.exec("pgrep -f 'xray run' 2>/dev/null | head -1") or ""):gsub("%s+", "")
+    local enabled = uci:get("dpi-rip", "main", "enabled")        or "0"
+    local sub_id  = uci:get("dpi-rip", "main", "active_sub")     or ""
     local remarks = uci:get("dpi-rip", "main", "active_remarks") or ""
 
     luci.http.prepare_content("application/json")
@@ -119,12 +133,13 @@ function action_status()
         running        = (pid ~= ""),
         enabled        = (enabled == "1"),
         pid            = pid,
+        active_sub     = sub_id,
         active_remarks = remarks,
     })
 end
 
 -- ================================================================
--- AJAX: toggle
+-- AJAX: toggle enable/disable
 -- ================================================================
 function action_toggle()
     local uci = require "luci.model.uci".cursor()
@@ -132,12 +147,15 @@ function action_toggle()
 
     local enabled = uci:get("dpi-rip", "main", "enabled") or "0"
     local new_val = (enabled == "1") and "0" or "1"
+
     uci:set("dpi-rip", "main", "enabled", new_val)
     uci:save("dpi-rip")
     uci:commit("dpi-rip")
 
-    if new_val == "1" then sys.exec("/etc/init.d/dpi-rip start &")
-    else                   sys.exec("/etc/init.d/dpi-rip stop &")
+    if new_val == "1" then
+        sys.exec("/etc/init.d/dpi-rip start &")
+    else
+        sys.exec("/etc/init.d/dpi-rip stop &")
     end
 
     luci.http.prepare_content("application/json")
@@ -145,51 +163,159 @@ function action_toggle()
 end
 
 -- ================================================================
--- AJAX: fetch_sub (обновить подписку без перезагрузки страницы)
+-- AJAX: add subscription
+-- POST params: url
+-- Returns: {ok, sub_id, log, count, title, info}
+-- ================================================================
+function action_add_sub()
+    local http = require "luci.http"
+    local uci  = require "luci.model.uci".cursor()
+    local sys  = require "luci.sys"
+
+    local url = trim(http.formvalue("url") or "")
+    if url == "" then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({ ok = false, error = "URL is required" })
+        return
+    end
+
+    -- Generate unique section name (timestamp-based)
+    local sub_id = "s" .. tostring(os.time())
+
+    -- Create UCI section
+    uci:set("dpi-rip", sub_id, "subscription")
+    uci:set("dpi-rip", sub_id, "url",   url)
+    uci:set("dpi-rip", sub_id, "title", "")
+    uci:save("dpi-rip")
+    uci:commit("dpi-rip")
+
+    -- Write URL to temp file BEFORE exec — bypasses any UCI commit timing issue
+    write_url_hint(sub_id, url)
+
+    local log     = sys.exec("/usr/bin/dpi-rip-fetch.sh " .. sub_id .. " 2>&1") or ""
+    local servers = load_servers(sub_id)
+    local info    = load_sub_info(sub_id)
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({
+        ok     = (#servers > 0),
+        sub_id = sub_id,
+        log    = log,
+        count  = #servers,
+        title  = (info and info.title ~= "" and info.title) or sub_id,
+        info   = info,
+    })
+end
+
+-- ================================================================
+-- AJAX: delete subscription
+-- POST params: sub_id
+-- ================================================================
+function action_del_sub()
+    local http = require "luci.http"
+    local uci  = require "luci.model.uci".cursor()
+    local sys  = require "luci.sys"
+
+    local sub_id = trim(http.formvalue("sub_id") or "")
+    if not validate_sub_id(sub_id) then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({ ok = false, error = "invalid sub_id" })
+        return
+    end
+
+    -- If this was the active subscription, clear it
+    local active = uci:get("dpi-rip", "main", "active_sub") or ""
+    if active == sub_id then
+        uci:set("dpi-rip", "main", "active_sub",     "")
+        uci:set("dpi-rip", "main", "active_remarks", "")
+        uci:set("dpi-rip", "main", "enabled",        "0")
+        sys.exec("/etc/init.d/dpi-rip stop &")
+    end
+
+    uci:delete("dpi-rip", sub_id)
+    uci:save("dpi-rip")
+    uci:commit("dpi-rip")
+
+    -- Remove data files
+    sys.exec("rm -f '/etc/dpi-rip/sub_" .. sub_id .. ".json' "
+           .. "'/etc/dpi-rip/sub_" .. sub_id .. "_info.json' 2>/dev/null")
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({ ok = true })
+end
+
+-- ================================================================
+-- AJAX: refresh (re-fetch) a subscription
+-- POST params: sub_id, url (optional — to update URL)
 -- ================================================================
 function action_fetch_sub()
     local http = require "luci.http"
     local uci  = require "luci.model.uci".cursor()
     local sys  = require "luci.sys"
 
-    local sub_url = (http.formvalue("sub_url") or ""):gsub("%s+", "")
-    if sub_url ~= "" then
-        uci:set("dpi-rip", "main", "sub_url", sub_url)
-        uci:save("dpi-rip")
-        uci:commit("dpi-rip")
+    local sub_id = trim(http.formvalue("sub_id") or "")
+    local url    = trim(http.formvalue("url")    or "")
+
+    if not validate_sub_id(sub_id) then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({ ok = false, error = "invalid sub_id" })
+        return
     end
 
-    local ret = sys.exec("/usr/bin/dpi-rip-fetch.sh 2>&1")
-    local servers = load_servers()
+    -- Update URL in UCI if provided
+    if url ~= "" then
+        uci:set("dpi-rip", sub_id, "url", url)
+        uci:save("dpi-rip")
+        uci:commit("dpi-rip")
+    else
+        url = uci:get("dpi-rip", sub_id, "url") or ""
+    end
 
-    http.prepare_content("application/json")
-    http.write_json({
-        ok      = (servers ~= nil and #servers > 0),
-        log     = ret,
-        servers = servers or {},
-        count   = servers and #servers or 0,
+    if url == "" then
+        luci.http.prepare_content("application/json")
+        luci.http.write_json({ ok = false, error = "no URL configured" })
+        return
+    end
+
+    -- Write URL hint to temp file
+    write_url_hint(sub_id, url)
+
+    local log     = sys.exec("/usr/bin/dpi-rip-fetch.sh " .. sub_id .. " 2>&1") or ""
+    local servers = load_servers(sub_id)
+    local info    = load_sub_info(sub_id)
+
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({
+        ok      = (#servers > 0),
+        log     = log,
+        count   = #servers,
+        title   = (info and info.title ~= "" and info.title) or sub_id,
+        servers = servers,
+        info    = info,
     })
 end
 
 -- ================================================================
--- AJAX: get_log
+-- AJAX: get log
+-- GET params: type (error|access), lines
 -- ================================================================
 function action_get_log()
     local http    = require "luci.http"
     local sys     = require "luci.sys"
     local logtype = http.formvalue("type") or "error"
-    local lines   = tonumber(http.formvalue("lines")) or 100
+    local lines   = math.min(tonumber(http.formvalue("lines") or 100) or 100, 1000)
     local logfile = (logtype == "access")
         and "/var/log/dpi-rip-access.log"
         or  "/var/log/dpi-rip-error.log"
 
-    local content = sys.exec(string.format("tail -n %d %s 2>/dev/null", lines, logfile))
-    http.prepare_content("application/json")
-    http.write_json({ ok = true, content = content })
+    local content = sys.exec(string.format("tail -n %d %s 2>/dev/null", lines, logfile)) or ""
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({ ok = true, content = content })
 end
 
 -- ================================================================
--- AJAX: clear_log
+-- AJAX: clear log
+-- POST params: type (error|access)
 -- ================================================================
 function action_clear_log()
     local http    = require "luci.http"
@@ -199,51 +325,85 @@ function action_clear_log()
         and "/var/log/dpi-rip-access.log"
         or  "/var/log/dpi-rip-error.log"
     sys.exec("> " .. logfile .. " 2>/dev/null")
-    http.prepare_content("application/json")
-    http.write_json({ ok = true })
+    luci.http.prepare_content("application/json")
+    luci.http.write_json({ ok = true })
 end
 
 -- ================================================================
--- Helper: читаем servers.json через python3
+-- Helpers
 -- ================================================================
-function load_servers()
-    local sys = require "luci.sys"
-    local json_str = sys.exec(
-        "python3 -c \""..
-        "import json,sys;"..
-        "d=json.load(open('/etc/dpi-rip/servers.json'));"..
-        "print(json.dumps([{'remarks':s.get('remarks',''),'protocol':s.get('outbounds',[{}])[0].get('protocol','?')} for s in d]))"..
-        "\" 2>/dev/null"
-    )
-    if not json_str or json_str == "" then return {} end
 
-    -- Простой парсинг JSON массива через lua (без зависимостей)
+-- Load all subscriptions with their server lists and meta info
+function load_all_subs()
+    local uci  = require "luci.model.uci".cursor()
+    local subs = {}
+    uci:foreach("dpi-rip", "subscription", function(s)
+        local id      = s[".name"]
+        local info    = load_sub_info(id)
+        local servers = load_servers(id)
+        local title   = (info and info.title and info.title ~= "" and info.title)
+                     or (s.title and s.title ~= "" and s.title)
+                     or id
+        subs[#subs + 1] = {
+            id      = id,
+            url     = s.url or "",
+            title   = title,
+            servers = servers,
+            count   = #servers,
+            info    = info,
+        }
+    end)
+    return subs
+end
+
+-- Load server list for one subscription (returns [{remarks, protocol}])
+function load_servers(sub_id)
+    if not validate_sub_id(sub_id) then return {} end
+    local sys  = require "luci.sys"
+    local file = "/etc/dpi-rip/sub_" .. sub_id .. ".json"
+    local out  = sys.exec("/usr/bin/dpi-rip-list.sh " .. file .. " 2>/dev/null") or ""
     local servers = {}
-    for proto, remarks in json_str:gmatch('"protocol"%s*:%s*"([^"]*)"[^}]*"remarks"%s*:%s*"([^"]*)"') do
-        servers[#servers + 1] = { protocol = proto, remarks = remarks }
-    end
-    -- Пробуем обратный порядок полей
-    if #servers == 0 then
-        for remarks, proto in json_str:gmatch('"remarks"%s*:%s*"([^"]*)"[^}]*"protocol"%s*:%s*"([^"]*)"') do
-            servers[#servers + 1] = { protocol = proto, remarks = remarks }
+    for line in out:gmatch("[^\n]+") do
+        local remarks, protocol = line:match("^(.*)\t(.*)$")
+        if remarks and remarks ~= "" then
+            servers[#servers + 1] = { remarks = remarks, protocol = protocol or "?" }
         end
     end
     return servers
 end
 
--- ================================================================
--- Helper: читаем sub-info.json
--- ================================================================
-function load_sub_info()
+-- Load meta info for one subscription from JSON file
+function load_sub_info(sub_id)
+    if not validate_sub_id(sub_id) then return nil end
     local sys = require "luci.sys"
-    local raw = sys.exec("cat /etc/dpi-rip/sub-info.json 2>/dev/null")
-    if not raw or raw == "" then return nil end
+    local raw = sys.exec("cat '/etc/dpi-rip/sub_" .. sub_id .. "_info.json' 2>/dev/null") or ""
+    if raw == "" then return nil end
 
-    local info = {}
-    info.title      = raw:match('"title"%s*:%s*"([^"]*)"')      or ""
-    info.used_fmt   = raw:match('"used_fmt"%s*:%s*"([^"]*)"')   or ""
-    info.total_fmt  = raw:match('"total_fmt"%s*:%s*"([^"]*)"')  or ""
-    info.expire_str = raw:match('"expire_str"%s*:%s*"([^"]*)"') or ""
-    info.used_pct   = tonumber(raw:match('"used_pct"%s*:%s*([%d%.]+)')) or 0
-    return info
+    return {
+        title      = raw:match('"title"%s*:%s*"([^"]*)"')      or "",
+        used_fmt   = raw:match('"used_fmt"%s*:%s*"([^"]*)"')   or "",
+        total_fmt  = raw:match('"total_fmt"%s*:%s*"([^"]*)"')  or "",
+        expire_str = raw:match('"expire_str"%s*:%s*"([^"]*)"') or "",
+        used_pct   = tonumber(raw:match('"used_pct"%s*:%s*([%d%.]+)')) or 0,
+        count      = tonumber(raw:match('"count"%s*:%s*([%d]+)'))      or 0,
+    }
+end
+
+-- Write URL to temp file so fetch.sh reads it immediately (no UCI timing issue)
+function write_url_hint(sub_id, url)
+    local f = io.open("/tmp/dpi-rip-url-" .. sub_id, "w")
+    if f then
+        f:write(url)
+        f:close()
+    end
+end
+
+-- Validate that sub_id is safe to use in shell commands
+function validate_sub_id(s)
+    return s and s ~= "" and not s:match("[^%w_]")
+end
+
+-- Trim leading/trailing whitespace
+function trim(s)
+    return (s or ""):match("^%s*(.-)%s*$")
 end

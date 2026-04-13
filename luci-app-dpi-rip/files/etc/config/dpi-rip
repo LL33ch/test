@@ -1,7 +1,5 @@
-# /etc/config/dpi-rip
-
 config main
-    option enabled '0'
-    option sub_url ''
-    option active_remarks ''
-    option proxy_mode 'tproxy'
+	option enabled '0'
+	option active_sub ''
+	option active_remarks ''
+	option proxy_mode 'tproxy'
