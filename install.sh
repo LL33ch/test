@@ -16,7 +16,8 @@ mkdir -p /usr/share/rpcd/acl.d
 dl() { wget -q -O "$2" "${RAW}/$1"; }
 
 echo "  -> files"
-dl "files/etc/config/dpi-rip"                          /etc/config/dpi-rip
+# Конфиг не перезаписываем — сохраняем настройки пользователя
+[ ! -f /etc/config/dpi-rip ] && dl "files/etc/config/dpi-rip" /etc/config/dpi-rip
 dl "files/etc/init.d/dpi-rip"                          /etc/init.d/dpi-rip
 dl "root/usr/bin/dpi-rip-fetch.sh"                     /usr/bin/dpi-rip-fetch.sh
 dl "root/usr/bin/dpi-rip-gen.sh"                       /usr/bin/dpi-rip-gen.sh
