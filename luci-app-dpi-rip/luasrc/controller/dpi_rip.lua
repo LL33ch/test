@@ -1,6 +1,5 @@
--- DPI-RIP LuCI Controller
--- Использует только call() + template() — работает на любой версии OpenWRT
--- Никаких зависимостей от luci.cbi или luci-compat
+-- DPI-RIP LuCI Controller (subscription-based)
+-- Работает на любой версии OpenWRT: только call() + template(), без luci.cbi
 
 module("luci.controller.dpi_rip", package.seeall)
 
@@ -18,27 +17,18 @@ function index()
     entry({"admin", "services", "dpi-rip", "overview"},
         call("action_overview"), _("Overview"), 10)
 
-    entry({"admin", "services", "dpi-rip", "servers"},
-        call("action_servers"), _("Servers"), 20)
-
     entry({"admin", "services", "dpi-rip", "log"},
-        call("action_log"), _("Log"), 30)
+        call("action_log"), _("Log"), 20)
 
-    -- AJAX endpoints
+    -- AJAX
     entry({"admin", "services", "dpi-rip", "status"},
         call("action_status")).leaf = true
 
     entry({"admin", "services", "dpi-rip", "toggle"},
         call("action_toggle")).leaf = true
 
-    entry({"admin", "services", "dpi-rip", "add_server"},
-        call("action_add_server")).leaf = true
-
-    entry({"admin", "services", "dpi-rip", "del_server"},
-        call("action_del_server")).leaf = true
-
-    entry({"admin", "services", "dpi-rip", "set_active"},
-        call("action_set_active")).leaf = true
+    entry({"admin", "services", "dpi-rip", "fetch_sub"},
+        call("action_fetch_sub")).leaf = true
 
     entry({"admin", "services", "dpi-rip", "get_log"},
         call("action_get_log")).leaf = true
@@ -48,7 +38,7 @@ function index()
 end
 
 -- ================================================================
--- Overview: настройки + статус
+-- Overview
 -- ================================================================
 function action_overview()
     local http = require "luci.http"
@@ -56,122 +46,52 @@ function action_overview()
     local sys  = require "luci.sys"
 
     if http.getenv("REQUEST_METHOD") == "POST" then
-        local enabled    = http.formvalue("enabled")    or "0"
-        local proxy_mode = http.formvalue("proxy_mode") or "tproxy"
-        local bypass_cn  = http.formvalue("bypass_cn")  or "0"
-        local dns_mode   = http.formvalue("dns_mode")   or "doh"
-        local log_level  = http.formvalue("log_level")  or "warning"
-        local active_srv = http.formvalue("active_server") or ""
+        local action = http.formvalue("action") or "save"
 
-        uci:set("dpi-rip", "main", "enabled",       enabled)
-        uci:set("dpi-rip", "main", "proxy_mode",    proxy_mode)
-        uci:set("dpi-rip", "main", "bypass_cn",     bypass_cn)
-        uci:set("dpi-rip", "main", "dns_mode",      dns_mode)
-        uci:set("dpi-rip", "main", "log_level",     log_level)
-        uci:set("dpi-rip", "main", "active_server", active_srv)
-        uci:save("dpi-rip")
-        uci:commit("dpi-rip")
+        if action == "fetch" then
+            -- Сохраняем URL и запускаем fetch
+            local sub_url = (http.formvalue("sub_url") or ""):gsub("%s+", "")
+            uci:set("dpi-rip", "main", "sub_url", sub_url)
+            uci:save("dpi-rip")
+            uci:commit("dpi-rip")
+            sys.exec("/usr/bin/dpi-rip-fetch.sh > /tmp/dpi-rip-fetch.log 2>&1")
 
-        sys.exec("/etc/init.d/dpi-rip restart &")
+        elseif action == "save" then
+            local remarks    = http.formvalue("active_remarks") or ""
+            local proxy_mode = http.formvalue("proxy_mode") or "tproxy"
+            local enabled    = http.formvalue("enabled") or "0"
+
+            uci:set("dpi-rip", "main", "active_remarks", remarks)
+            uci:set("dpi-rip", "main", "proxy_mode",     proxy_mode)
+            uci:set("dpi-rip", "main", "enabled",        enabled)
+            uci:save("dpi-rip")
+            uci:commit("dpi-rip")
+            sys.exec("/etc/init.d/dpi-rip restart &")
+        end
+
         http.redirect(luci.dispatcher.build_url("admin", "services", "dpi-rip", "overview"))
         return
     end
 
-    -- Собираем данные для шаблона
+    -- Данные для шаблона
     local cfg = {
-        enabled       = uci:get("dpi-rip", "main", "enabled")       or "0",
-        proxy_mode    = uci:get("dpi-rip", "main", "proxy_mode")    or "tproxy",
-        bypass_cn     = uci:get("dpi-rip", "main", "bypass_cn")     or "1",
-        dns_mode      = uci:get("dpi-rip", "main", "dns_mode")      or "doh",
-        log_level     = uci:get("dpi-rip", "main", "log_level")     or "warning",
-        active_server = uci:get("dpi-rip", "main", "active_server") or "",
+        sub_url        = uci:get("dpi-rip", "main", "sub_url")        or "",
+        active_remarks = uci:get("dpi-rip", "main", "active_remarks") or "",
+        proxy_mode     = uci:get("dpi-rip", "main", "proxy_mode")     or "tproxy",
+        enabled        = uci:get("dpi-rip", "main", "enabled")        or "0",
     }
 
     local pid = sys.exec("pgrep -f 'xray run' | head -1"):gsub("%s+", "")
     cfg.running = (pid ~= "")
-    cfg.pid = pid
+    cfg.pid     = pid
 
-    -- Список серверов для select
-    local servers = {}
-    uci:foreach("dpi-rip", "server", function(s)
-        servers[#servers + 1] = {
-            id   = s[".name"],
-            name = s.name or s[".name"],
-        }
-    end)
-    cfg.servers = servers
+    -- Читаем список серверов и мета-информацию подписки
+    cfg.servers  = load_servers()
+    cfg.sub_info = load_sub_info()
+    cfg.fetch_log = sys.exec("cat /tmp/dpi-rip-fetch.log 2>/dev/null") or ""
 
     local token = http.formtoken and http.formtoken() or ""
     luci.template.render("dpi_rip/overview", { cfg = cfg, token = token })
-end
-
--- ================================================================
--- Servers: список + добавление
--- ================================================================
-function action_servers()
-    local http = require "luci.http"
-    local uci  = require "luci.model.uci".cursor()
-
-    if http.getenv("REQUEST_METHOD") == "POST" then
-        local action = http.formvalue("action") or ""
-
-        if action == "add" then
-            local link = (http.formvalue("link") or ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local name = http.formvalue("name") or ""
-
-            if link ~= "" then
-                local proto = detect_protocol(link)
-                if name == "" then
-                    name = extract_name(link) or ((proto or "unknown") .. "_" .. os.time())
-                end
-                local sid = "server_" .. os.time()
-                uci:set("dpi-rip", sid, "server")
-                uci:set("dpi-rip", sid, "name",     name)
-                uci:set("dpi-rip", sid, "link",     link)
-                uci:set("dpi-rip", sid, "protocol", proto or "unknown")
-                uci:save("dpi-rip")
-                uci:commit("dpi-rip")
-            end
-
-        elseif action == "delete" then
-            local sid = http.formvalue("id") or ""
-            if sid ~= "" then
-                local active = uci:get("dpi-rip", "main", "active_server") or ""
-                if active == sid then
-                    uci:set("dpi-rip", "main", "active_server", "")
-                end
-                uci:delete("dpi-rip", sid)
-                uci:save("dpi-rip")
-                uci:commit("dpi-rip")
-            end
-
-        elseif action == "activate" then
-            local sid = http.formvalue("id") or ""
-            uci:set("dpi-rip", "main", "active_server", sid)
-            uci:save("dpi-rip")
-            uci:commit("dpi-rip")
-            local sys = require "luci.sys"
-            sys.exec("/etc/init.d/dpi-rip restart &")
-        end
-
-        http.redirect(luci.dispatcher.build_url("admin", "services", "dpi-rip", "servers"))
-        return
-    end
-
-    local servers = {}
-    local active = uci:get("dpi-rip", "main", "active_server") or ""
-    uci:foreach("dpi-rip", "server", function(s)
-        servers[#servers + 1] = {
-            id       = s[".name"],
-            name     = s.name     or s[".name"],
-            protocol = s.protocol or "unknown",
-            link     = s.link     or "",
-            active   = (s[".name"] == active),
-        }
-    end)
-
-    local token = http.formtoken and http.formtoken() or ""
-    luci.template.render("dpi_rip/servers", { servers = servers, token = token })
 end
 
 -- ================================================================
@@ -192,18 +112,14 @@ function action_status()
 
     local pid     = sys.exec("pgrep -f 'xray run' | head -1"):gsub("%s+", "")
     local enabled = uci:get("dpi-rip", "main", "enabled") or "0"
-    local active  = uci:get("dpi-rip", "main", "active_server") or ""
-    local sname   = ""
-    if active ~= "" then
-        sname = uci:get("dpi-rip", active, "name") or active
-    end
+    local remarks = uci:get("dpi-rip", "main", "active_remarks") or ""
 
     luci.http.prepare_content("application/json")
     luci.http.write_json({
-        running      = (pid ~= ""),
-        enabled      = (enabled == "1"),
-        pid          = pid,
-        server_name  = sname,
+        running        = (pid ~= ""),
+        enabled        = (enabled == "1"),
+        pid            = pid,
+        active_remarks = remarks,
     })
 end
 
@@ -229,84 +145,30 @@ function action_toggle()
 end
 
 -- ================================================================
--- AJAX: add_server
+-- AJAX: fetch_sub (обновить подписку без перезагрузки страницы)
 -- ================================================================
-function action_add_server()
-    local http = require "luci.http"
-    local uci  = require "luci.model.uci".cursor()
-
-    local link = (http.formvalue("link") or ""):gsub("^%s+", ""):gsub("%s+$", "")
-    local name = http.formvalue("name") or ""
-
-    if link == "" then
-        http.prepare_content("application/json")
-        http.write_json({ ok = false, error = "Empty link" })
-        return
-    end
-
-    local proto = detect_protocol(link)
-    if not proto then
-        http.prepare_content("application/json")
-        http.write_json({ ok = false, error = "Unsupported protocol" })
-        return
-    end
-
-    if name == "" then
-        name = extract_name(link) or (proto .. "_server")
-    end
-
-    local sid = "server_" .. os.time()
-    uci:set("dpi-rip", sid, "server")
-    uci:set("dpi-rip", sid, "name",     name)
-    uci:set("dpi-rip", sid, "link",     link)
-    uci:set("dpi-rip", sid, "protocol", proto)
-    uci:save("dpi-rip")
-    uci:commit("dpi-rip")
-
-    http.prepare_content("application/json")
-    http.write_json({ ok = true, id = sid, name = name, protocol = proto })
-end
-
--- ================================================================
--- AJAX: del_server
--- ================================================================
-function action_del_server()
-    local http = require "luci.http"
-    local uci  = require "luci.model.uci".cursor()
-    local sid  = http.formvalue("id") or ""
-
-    if sid == "" then
-        http.prepare_content("application/json")
-        http.write_json({ ok = false, error = "No id" })
-        return
-    end
-
-    local active = uci:get("dpi-rip", "main", "active_server") or ""
-    if active == sid then uci:set("dpi-rip", "main", "active_server", "") end
-    uci:delete("dpi-rip", sid)
-    uci:save("dpi-rip")
-    uci:commit("dpi-rip")
-
-    http.prepare_content("application/json")
-    http.write_json({ ok = true })
-end
-
--- ================================================================
--- AJAX: set_active
--- ================================================================
-function action_set_active()
+function action_fetch_sub()
     local http = require "luci.http"
     local uci  = require "luci.model.uci".cursor()
     local sys  = require "luci.sys"
-    local sid  = http.formvalue("id") or ""
 
-    uci:set("dpi-rip", "main", "active_server", sid)
-    uci:save("dpi-rip")
-    uci:commit("dpi-rip")
-    sys.exec("/etc/init.d/dpi-rip restart &")
+    local sub_url = (http.formvalue("sub_url") or ""):gsub("%s+", "")
+    if sub_url ~= "" then
+        uci:set("dpi-rip", "main", "sub_url", sub_url)
+        uci:save("dpi-rip")
+        uci:commit("dpi-rip")
+    end
+
+    local ret = sys.exec("/usr/bin/dpi-rip-fetch.sh 2>&1")
+    local servers = load_servers()
 
     http.prepare_content("application/json")
-    http.write_json({ ok = true })
+    http.write_json({
+        ok      = (servers ~= nil and #servers > 0),
+        log     = ret,
+        servers = servers or {},
+        count   = servers and #servers or 0,
+    })
 end
 
 -- ================================================================
@@ -342,24 +204,46 @@ function action_clear_log()
 end
 
 -- ================================================================
--- Helpers
+-- Helper: читаем servers.json через python3
 -- ================================================================
-function detect_protocol(link)
-    if link:match("^vless://")               then return "vless"       end
-    if link:match("^vmess://")               then return "vmess"       end
-    if link:match("^trojan://")              then return "trojan"      end
-    if link:match("^ss://")                  then return "shadowsocks" end
-    if link:match("^hy2://") or
-       link:match("^hysteria2://")           then return "hysteria2"   end
-    return nil
+function load_servers()
+    local sys = require "luci.sys"
+    local json_str = sys.exec(
+        "python3 -c \""..
+        "import json,sys;"..
+        "d=json.load(open('/etc/dpi-rip/servers.json'));"..
+        "print(json.dumps([{'remarks':s.get('remarks',''),'protocol':s.get('outbounds',[{}])[0].get('protocol','?')} for s in d]))"..
+        "\" 2>/dev/null"
+    )
+    if not json_str or json_str == "" then return {} end
+
+    -- Простой парсинг JSON массива через lua (без зависимостей)
+    local servers = {}
+    for proto, remarks in json_str:gmatch('"protocol"%s*:%s*"([^"]*)"[^}]*"remarks"%s*:%s*"([^"]*)"') do
+        servers[#servers + 1] = { protocol = proto, remarks = remarks }
+    end
+    -- Пробуем обратный порядок полей
+    if #servers == 0 then
+        for remarks, proto in json_str:gmatch('"remarks"%s*:%s*"([^"]*)"[^}]*"protocol"%s*:%s*"([^"]*)"') do
+            servers[#servers + 1] = { protocol = proto, remarks = remarks }
+        end
+    end
+    return servers
 end
 
-function extract_name(link)
-    local name = link:match("#(.+)$")
-    if name then
-        name = name:gsub("%%(%x%x)", function(h)
-            return string.char(tonumber(h, 16))
-        end)
-    end
-    return (name ~= "" and name or nil)
+-- ================================================================
+-- Helper: читаем sub-info.json
+-- ================================================================
+function load_sub_info()
+    local sys = require "luci.sys"
+    local raw = sys.exec("cat /etc/dpi-rip/sub-info.json 2>/dev/null")
+    if not raw or raw == "" then return nil end
+
+    local info = {}
+    info.title      = raw:match('"title"%s*:%s*"([^"]*)"')      or ""
+    info.used_fmt   = raw:match('"used_fmt"%s*:%s*"([^"]*)"')   or ""
+    info.total_fmt  = raw:match('"total_fmt"%s*:%s*"([^"]*)"')  or ""
+    info.expire_str = raw:match('"expire_str"%s*:%s*"([^"]*)"') or ""
+    info.used_pct   = tonumber(raw:match('"used_pct"%s*:%s*([%d%.]+)')) or 0
+    return info
 end
