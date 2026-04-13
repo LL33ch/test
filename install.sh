@@ -34,7 +34,6 @@ dl "root/usr/share/rpcd/acl.d/luci-app-dpi-rip.json"     /usr/share/rpcd/acl.d/l
 dl "luasrc/controller/dpi_rip.lua"                         /usr/lib/lua/luci/controller/dpi_rip.lua
 dl "luasrc/model/cbi/dpi_rip/overview.lua"                /usr/lib/lua/luci/model/cbi/dpi_rip/overview.lua
 dl "luasrc/model/cbi/dpi_rip/servers.lua"                 /usr/lib/lua/luci/model/cbi/dpi_rip/servers.lua
-dl "luasrc/view/dpi_rip/overview.htm"                     /usr/lib/lua/luci/view/dpi_rip/overview.htm
 dl "luasrc/view/dpi_rip/log.htm"                          /usr/lib/lua/luci/view/dpi_rip/log.htm
 
 # --- Права ---

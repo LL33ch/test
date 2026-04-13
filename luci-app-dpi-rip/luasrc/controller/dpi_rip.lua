@@ -16,16 +16,13 @@ function index()
 
     -- Страницы
     entry({"admin", "services", "dpi-rip", "overview"},
-        template("dpi_rip/overview"), _("Overview"), 10)
-
-    entry({"admin", "services", "dpi-rip", "settings"},
-        cbi("dpi_rip/overview"), _("Settings"), 20)
+        cbi("dpi_rip/overview"), _("Overview"), 10)
 
     entry({"admin", "services", "dpi-rip", "servers"},
-        cbi("dpi_rip/servers"), _("Servers"), 30)
+        cbi("dpi_rip/servers"), _("Servers"), 20)
 
     entry({"admin", "services", "dpi-rip", "log"},
-        template("dpi_rip/log"), _("Log"), 40)
+        template("dpi_rip/log"), _("Log"), 30)
 
     -- AJAX endpoints (leaf = не показываются в меню)
     entry({"admin", "services", "dpi-rip", "status"},
