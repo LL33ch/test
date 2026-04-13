@@ -34,7 +34,7 @@ local enabled = (cfg.enabled == "1")
 
   <!-- Настройки -->
   <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','overview')%>">
-    <%=build_token()%>
+    <input type="hidden" name="token" value="<%=token%>">
 
     <div class="cbi-section">
       <h3 class="cbi-section-legend"><%:Settings%></h3>

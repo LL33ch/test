@@ -101,7 +101,8 @@ function action_overview()
     end)
     cfg.servers = servers
 
-    luci.template.render("dpi_rip/overview", { cfg = cfg })
+    local token = http.formtoken and http.formtoken() or ""
+    luci.template.render("dpi_rip/overview", { cfg = cfg, token = token })
 end
 
 -- ================================================================
@@ -169,14 +170,17 @@ function action_servers()
         }
     end)
 
-    luci.template.render("dpi_rip/servers", { servers = servers })
+    local token = http.formtoken and http.formtoken() or ""
+    luci.template.render("dpi_rip/servers", { servers = servers, token = token })
 end
 
 -- ================================================================
 -- Log
 -- ================================================================
 function action_log()
-    luci.template.render("dpi_rip/log", {})
+    local http  = require "luci.http"
+    local token = http.formtoken and http.formtoken() or ""
+    luci.template.render("dpi_rip/log", { token = token })
 end
 
 -- ================================================================

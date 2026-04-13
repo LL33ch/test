@@ -6,7 +6,7 @@
 
   <!-- Добавить сервер -->
   <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','servers')%>">
-    <%=build_token()%>
+    <input type="hidden" name="token" value="<%=token%>">
     <input type="hidden" name="action" value="add">
 
     <div class="cbi-section">
@@ -71,7 +71,7 @@
             <td class="cbi-section-table-cell">
               <% if not s.active then %>
               <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','servers')%>" style="display:inline">
-                <%=build_token()%>
+                <input type="hidden" name="token" value="<%=token%>">
                 <input type="hidden" name="action" value="activate">
                 <input type="hidden" name="id" value="<%=s.id%>">
                 <input type="submit" class="cbi-button cbi-button-apply" value="<%:Activate%>">
@@ -79,7 +79,7 @@
               <% end %>
               <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','servers')%>" style="display:inline"
                 onsubmit="return confirm('<%:Delete%> <%=s.name%>?')">
-                <%=build_token()%>
+                <input type="hidden" name="token" value="<%=token%>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<%=s.id%>">
                 <input type="submit" class="cbi-button cbi-button-remove" value="<%:Delete%>">
