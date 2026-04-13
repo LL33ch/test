@@ -31,10 +31,10 @@ dl "files/etc/config/dpi-rip"                              /etc/config/dpi-rip
 dl "files/etc/init.d/dpi-rip"                             /etc/init.d/dpi-rip
 dl "root/usr/bin/dpi-rip-gen.sh"                          /usr/bin/dpi-rip-gen.sh
 dl "root/usr/share/rpcd/acl.d/luci-app-dpi-rip.json"     /usr/share/rpcd/acl.d/luci-app-dpi-rip.json
-dl "luasrc/controller/dpi_rip.lua"                         /usr/lib/lua/luci/controller/dpi_rip.lua
-dl "luasrc/model/cbi/dpi_rip/overview.lua"                /usr/lib/lua/luci/model/cbi/dpi_rip/overview.lua
-dl "luasrc/model/cbi/dpi_rip/servers.lua"                 /usr/lib/lua/luci/model/cbi/dpi_rip/servers.lua
-dl "luasrc/view/dpi_rip/log.htm"                          /usr/lib/lua/luci/view/dpi_rip/log.htm
+dl "luasrc/controller/dpi_rip.lua"      /usr/lib/lua/luci/controller/dpi_rip.lua
+dl "luasrc/view/dpi_rip/overview.htm"  /usr/lib/lua/luci/view/dpi_rip/overview.htm
+dl "luasrc/view/dpi_rip/servers.htm"   /usr/lib/lua/luci/view/dpi_rip/servers.htm
+dl "luasrc/view/dpi_rip/log.htm"       /usr/lib/lua/luci/view/dpi_rip/log.htm
 
 # --- Права ---
 echo "  -> setting permissions"
