@@ -19,9 +19,7 @@ echo "  -> files"
 dl "files/etc/config/dpi-rip"                          /etc/config/dpi-rip
 dl "files/etc/init.d/dpi-rip"                          /etc/init.d/dpi-rip
 dl "root/usr/bin/dpi-rip-fetch.sh"                     /usr/bin/dpi-rip-fetch.sh
-dl "root/usr/bin/dpi-rip-fetch.py"                     /usr/bin/dpi-rip-fetch.py
 dl "root/usr/bin/dpi-rip-gen.sh"                       /usr/bin/dpi-rip-gen.sh
-dl "root/usr/bin/dpi-rip-gen.py"                       /usr/bin/dpi-rip-gen.py
 dl "root/usr/share/rpcd/acl.d/luci-app-dpi-rip.json"  /usr/share/rpcd/acl.d/luci-app-dpi-rip.json
 dl "luasrc/controller/dpi_rip.lua"                     /usr/lib/lua/luci/controller/dpi_rip.lua
 dl "luasrc/view/dpi_rip/overview.htm"                  /usr/lib/lua/luci/view/dpi_rip/overview.htm
@@ -30,9 +28,7 @@ dl "luasrc/view/dpi_rip/log.htm"                       /usr/lib/lua/luci/view/dp
 echo "  -> permissions"
 chmod +x /etc/init.d/dpi-rip
 chmod +x /usr/bin/dpi-rip-fetch.sh
-chmod +x /usr/bin/dpi-rip-fetch.py
 chmod +x /usr/bin/dpi-rip-gen.sh
-chmod +x /usr/bin/dpi-rip-gen.py
 
 /etc/init.d/dpi-rip enable
 
