@@ -1,0 +1,16 @@
+# /etc/config/dpi-rip
+# UCI конфиг для luci-app-dpi-rip
+
+config main
+    option enabled '0'
+    option active_server ''
+    option proxy_mode 'tproxy'
+    option bypass_cn '1'
+    option dns_mode 'doh'
+    option log_level 'warning'
+
+# Серверы добавляются через LuCI / action_add_server
+# config server 'server_1234567890'
+#     option name 'My VLESS Server'
+#     option link 'vless://uuid@host:port?security=reality&...'
+#     option protocol 'vless'

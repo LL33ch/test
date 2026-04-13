@@ -1,0 +1,149 @@
+<%+header%>
+
+<style>
+.dpr-log-toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.dpr-log-box {
+    background: #1a1a2e;
+    color: #a8ff78;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    padding: 14px 16px;
+    border-radius: 6px;
+    height: 480px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+}
+.dpr-log-box .err  { color: #ff6b6b; }
+.dpr-log-box .warn { color: #ffd93d; }
+.dpr-log-box .info { color: #6bcb77; }
+.dpr-select {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+.dpr-btn {
+    padding: 7px 18px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    background: #3498db;
+    color: #fff;
+}
+.dpr-btn:hover { background: #2980b9; }
+.dpr-btn.danger { background: #e74c3c; }
+.dpr-auto-label { font-size: 13px; color: #555; display:flex; align-items:center; gap:5px; }
+</style>
+
+<h2><%:DPI-RIP — Log%></h2>
+
+<div style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:20px 24px">
+
+<div class="dpr-log-toolbar">
+    <select class="dpr-select" id="log-type" onchange="dprLoadLog()">
+        <option value="error"><%:Error Log%></option>
+        <option value="access"><%:Access Log%></option>
+    </select>
+
+    <select class="dpr-select" id="log-lines" onchange="dprLoadLog()">
+        <option value="50">50 <%:lines%></option>
+        <option value="100" selected>100 <%:lines%></option>
+        <option value="200">200 <%:lines%></option>
+        <option value="500">500 <%:lines%></option>
+    </select>
+
+    <button class="dpr-btn" onclick="dprLoadLog()">&#8635; <%:Refresh%></button>
+    <button class="dpr-btn danger" onclick="dprClearLog()">&#128465; <%:Clear%></button>
+
+    <label class="dpr-auto-label">
+        <input type="checkbox" id="log-auto" onchange="dprToggleAuto()">
+        <%:Auto-refresh (5s)%>
+    </label>
+
+    <span id="log-ts" style="margin-left:auto;color:#aaa;font-size:12px"></span>
+</div>
+
+<div class="dpr-log-box" id="log-box"><%:Loading...%></div>
+
+</div>
+
+<script>
+var DPR_LOG = {
+    base:   '<%=luci.dispatcher.build_url("admin","services","dpi-rip")%>',
+    timer:  null
+};
+
+function dprLoadLog() {
+    var type  = document.getElementById('log-type').value;
+    var lines = document.getElementById('log-lines').value;
+
+    fetch(DPR_LOG.base + '/get_log?type=' + type + '&lines=' + lines)
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            var box = document.getElementById('log-box');
+            if (!d.content || d.content.trim() === '') {
+                box.innerHTML = '<span style="color:#555"><%:Log is empty%></span>';
+            } else {
+                box.innerHTML = dprColorize(dprEsc(d.content));
+            }
+            // Прокрутка вниз
+            box.scrollTop = box.scrollHeight;
+
+            document.getElementById('log-ts').textContent =
+                '<%:Updated%>: ' + new Date().toLocaleTimeString();
+        });
+}
+
+function dprClearLog() {
+    if (!confirm('<%:Clear log file?%>')) return;
+    var type = document.getElementById('log-type').value;
+    var file = (type === 'access')
+        ? '/var/log/dpi-rip-access.log'
+        : '/var/log/dpi-rip-error.log';
+    // Очищаем через endpoint
+    fetch(DPR_LOG.base + '/clear_log?type=' + type, { method: 'POST' })
+        .then(function(){ dprLoadLog(); });
+}
+
+function dprToggleAuto() {
+    var checked = document.getElementById('log-auto').checked;
+    if (checked) {
+        DPR_LOG.timer = setInterval(dprLoadLog, 5000);
+    } else {
+        clearInterval(DPR_LOG.timer);
+        DPR_LOG.timer = null;
+    }
+}
+
+// Подсветка строк лога
+function dprColorize(text) {
+    return text
+        .split('\n')
+        .map(function(line) {
+            if (/\berror\b/i.test(line))   return '<span class="err">'  + line + '</span>';
+            if (/\bwarn/i.test(line))       return '<span class="warn">' + line + '</span>';
+            if (/\binfo\b/i.test(line))     return '<span class="info">' + line + '</span>';
+            return line;
+        })
+        .join('\n');
+}
+
+function dprEsc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.addEventListener('DOMContentLoaded', dprLoadLog);
+</script>
+
+<%+footer%>

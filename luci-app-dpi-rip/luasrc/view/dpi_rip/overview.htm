@@ -1,0 +1,381 @@
+<%+header%>
+
+<style>
+.dpr-card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin-bottom: 18px;
+}
+.dpr-status-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.dpr-indicator {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+    background: #bbb;
+    transition: background .3s;
+}
+.dpr-indicator.running  { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
+.dpr-indicator.stopped  { background: #e74c3c; }
+.dpr-status-text { font-size: 15px; font-weight: 600; }
+.dpr-server-name { color: #555; font-size: 13px; margin-top: 4px; }
+
+/* Кнопка-переключатель */
+.dpr-toggle {
+    padding: 8px 22px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: background .2s;
+}
+.dpr-toggle.on  { background: #e74c3c; color: #fff; }
+.dpr-toggle.off { background: #2ecc71; color: #fff; }
+.dpr-toggle:disabled { opacity: .5; cursor: default; }
+
+/* Форма добавления */
+.dpr-link-box {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: monospace;
+    font-size: 13px;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    resize: vertical;
+    min-height: 80px;
+}
+.dpr-link-box:focus { border-color: #3498db; outline: none; }
+.dpr-input-name {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-top: 8px;
+}
+.dpr-btn {
+    margin-top: 10px;
+    padding: 8px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    background: #3498db;
+    color: #fff;
+    transition: background .2s;
+}
+.dpr-btn:hover { background: #2980b9; }
+.dpr-btn.danger { background: #e74c3c; }
+.dpr-btn.danger:hover { background: #c0392b; }
+.dpr-btn.success { background: #27ae60; }
+.dpr-btn:disabled { opacity: .5; cursor: default; }
+
+/* Таблица серверов */
+.dpr-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.dpr-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid #ddd; color: #555; }
+.dpr-table td { padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: middle; }
+.dpr-table tr:last-child td { border-bottom: none; }
+.dpr-table tr.active-row td { background: #f0fff4; }
+
+.badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #eee;
+    color: #555;
+}
+.badge.active   { background: #d5f5e3; color: #1e8449; }
+.badge.vless    { background: #d6eaf8; color: #1a5276; }
+.badge.vmess    { background: #e8daef; color: #6c3483; }
+.badge.trojan   { background: #fde8d8; color: #784212; }
+.badge.shadowsocks { background: #fdfde7; color: #7d6608; }
+
+.dpr-empty { color: #aaa; text-align: center; padding: 24px 0; }
+.dpr-msg   { padding: 10px 14px; border-radius: 4px; margin-top: 10px; display: none; }
+.dpr-msg.ok  { background: #d5f5e3; color: #1e8449; border: 1px solid #a9dfbf; }
+.dpr-msg.err { background: #fde8d8; color: #784212; border: 1px solid #f0b27a; }
+</style>
+
+<h2><%:DPI-RIP%></h2>
+
+<!-- ── Карточка статуса ── -->
+<div class="dpr-card">
+    <div class="dpr-status-row">
+        <span class="dpr-indicator" id="dpr-dot"></span>
+        <div>
+            <div class="dpr-status-text" id="dpr-status-text"><%:Loading...%></div>
+            <div class="dpr-server-name" id="dpr-server-name"></div>
+        </div>
+        <button class="dpr-toggle" id="dpr-toggle-btn" disabled onclick="dprToggle()">...</button>
+    </div>
+</div>
+
+<!-- ── Добавить сервер ── -->
+<div class="dpr-card">
+    <h3 style="margin-top:0"><%:Add Server%></h3>
+    <textarea class="dpr-link-box" id="dpr-link-input"
+        placeholder="vless://... or vmess://... or trojan://... or ss://...&#10;&#10;Можно вставить сразу несколько ссылок, по одной на строку"></textarea>
+    <input class="dpr-input-name" id="dpr-name-input"
+        placeholder="<%:Server name (optional, auto-detected from link)%>" />
+    <div>
+        <button class="dpr-btn" onclick="dprAddServer()"><%:Add%></button>
+        <span id="dpr-add-msg" class="dpr-msg"></span>
+    </div>
+</div>
+
+<!-- ── Список серверов ── -->
+<div class="dpr-card">
+    <h3 style="margin-top:0"><%:Servers%></h3>
+    <div id="dpr-server-list">
+        <div class="dpr-empty"><%:Loading...%></div>
+    </div>
+</div>
+
+<!-- ── Быстрые настройки ── -->
+<div class="dpr-card">
+    <h3 style="margin-top:0"><%:Quick Settings%></h3>
+    <form method="post" action="<%=luci.dispatcher.build_url('admin','services','dpi-rip','overview')%>">
+        <%=token%>
+        <table style="border-collapse:collapse;width:100%">
+            <tr>
+                <td style="padding:6px 0;width:200px"><label><%:Proxy Mode%></label></td>
+                <td>
+                    <select name="proxy_mode" id="qs-proxy-mode" style="padding:6px 10px;border:1px solid #ccc;border-radius:4px">
+                        <option value="tproxy"><%:Transparent Proxy (TProxy)%></option>
+                        <option value="socks"><%:SOCKS5 redirect%></option>
+                    </select>
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:6px 0"><label><%:Bypass CN traffic%></label></td>
+                <td><input type="checkbox" name="bypass_cn" id="qs-bypass-cn" value="1" style="width:16px;height:16px"></td>
+            </tr>
+            <tr>
+                <td style="padding:6px 0"><label><%:DNS Mode%></label></td>
+                <td>
+                    <select name="dns_mode" id="qs-dns-mode" style="padding:6px 10px;border:1px solid #ccc;border-radius:4px">
+                        <option value="doh"><%:DNS over HTTPS%></option>
+                        <option value="plain"><%:Plain DNS%></option>
+                    </select>
+                </td>
+            </tr>
+        </table>
+        <button type="submit" class="dpr-btn" style="margin-top:14px"><%:Save & Restart%></button>
+    </form>
+</div>
+
+<script>
+// ─── Состояние ───────────────────────────────────────────────
+var DPR = {
+    base:    '<%=luci.dispatcher.build_url("admin","services","dpi-rip")%>',
+    active:  '',
+    servers: []
+};
+
+// ─── Статус ──────────────────────────────────────────────────
+function dprRefreshStatus() {
+    fetch(DPR.base + '/status')
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            var dot  = document.getElementById('dpr-dot');
+            var text = document.getElementById('dpr-status-text');
+            var name = document.getElementById('dpr-server-name');
+            var btn  = document.getElementById('dpr-toggle-btn');
+
+            if (d.running) {
+                dot.className  = 'dpr-indicator running';
+                text.textContent = '<%:Running%>';
+            } else {
+                dot.className  = 'dpr-indicator stopped';
+                text.textContent = d.enabled ? '<%:Stopped (error?)%>' : '<%:Stopped%>';
+            }
+
+            name.textContent = d.server_name
+                ? ('<%:Server%>: ' + d.server_name)
+                : '<%:No active server%>';
+
+            DPR.active = d.active_server || '';
+
+            btn.disabled = false;
+            if (d.enabled) {
+                btn.textContent = '<%:Stop%>';
+                btn.className = 'dpr-toggle on';
+            } else {
+                btn.textContent = '<%:Start%>';
+                btn.className = 'dpr-toggle off';
+            }
+
+            // Обновляем метки в таблице
+            dprRenderList();
+        })
+        .catch(function(){ /* игнорируем сетевые ошибки при поллинге */ });
+}
+
+// ─── Переключатель ───────────────────────────────────────────
+function dprToggle() {
+    var btn = document.getElementById('dpr-toggle-btn');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    fetch(DPR.base + '/toggle', { method: 'POST' })
+        .then(function(r){ return r.json(); })
+        .then(function(){ setTimeout(dprRefreshStatus, 1500); });
+}
+
+// ─── Добавление сервера ──────────────────────────────────────
+function dprAddServer() {
+    var rawLinks = document.getElementById('dpr-link-input').value.trim();
+    var name     = document.getElementById('dpr-name-input').value.trim();
+    var msgEl    = document.getElementById('dpr-add-msg');
+
+    if (!rawLinks) {
+        dprShowMsg(msgEl, '<%:Please paste a link%>', false);
+        return;
+    }
+
+    // Поддержка нескольких ссылок (по строкам)
+    var links = rawLinks.split(/\r?\n/)
+        .map(function(l){ return l.trim(); })
+        .filter(function(l){ return l.length > 0; });
+
+    var promises = links.map(function(link, i) {
+        var fd = new FormData();
+        fd.append('link', link);
+        // Имя только для первого если одна ссылка
+        if (links.length === 1 && name) fd.append('name', name);
+        return fetch(DPR.base + '/add_server', { method: 'POST', body: fd })
+            .then(function(r){ return r.json(); });
+    });
+
+    Promise.all(promises).then(function(results) {
+        var ok  = results.filter(function(r){ return r.ok; });
+        var err = results.filter(function(r){ return !r.ok; });
+
+        if (ok.length > 0) {
+            document.getElementById('dpr-link-input').value = '';
+            document.getElementById('dpr-name-input').value = '';
+            dprShowMsg(msgEl,
+                '<%:Added%>: ' + ok.length +
+                (err.length ? ' | <%:Failed%>: ' + err.map(function(e){ return e.error; }).join(', ') : ''),
+                err.length === 0);
+            dprLoadServers();
+        } else {
+            dprShowMsg(msgEl, err.map(function(e){ return e.error; }).join('; '), false);
+        }
+    });
+}
+
+function dprShowMsg(el, text, ok) {
+    el.textContent = text;
+    el.className   = 'dpr-msg ' + (ok ? 'ok' : 'err');
+    el.style.display = 'inline-block';
+    setTimeout(function(){ el.style.display = 'none'; }, 4000);
+}
+
+// ─── Загрузка и рендер списка серверов ──────────────────────
+function dprLoadServers() {
+    // Читаем серверы через UCI напрямую через /cgi-bin/luci AJAX
+    // Используем отдельный endpoint (контроллер отдаёт всё)
+    fetch(DPR.base + '/status')
+        .then(function(r){ return r.json(); })
+        .then(function(status) {
+            DPR.active = status.active_server || '';
+            // Запрашиваем полный список
+            return fetch(DPR.base + '/list_servers');
+        })
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            DPR.servers = d.servers || [];
+            dprRenderList();
+        })
+        .catch(function(e) {
+            // Если endpoint ещё не добавлен — показываем пустую таблицу
+            dprRenderList();
+        });
+}
+
+function dprRenderList() {
+    var el = document.getElementById('dpr-server-list');
+    if (!DPR.servers || DPR.servers.length === 0) {
+        el.innerHTML = '<div class="dpr-empty"><%:No servers added yet%></div>';
+        return;
+    }
+
+    var html = '<table class="dpr-table"><thead><tr>' +
+        '<th><%:Name%></th><th><%:Protocol%></th><th><%:Status%></th><th><%:Actions%></th>' +
+        '</tr></thead><tbody>';
+
+    DPR.servers.forEach(function(srv) {
+        var isActive = (srv.id === DPR.active);
+        html += '<tr' + (isActive ? ' class="active-row"' : '') + '>';
+        html += '<td>' + dprEsc(srv.name || srv.id) + '</td>';
+        html += '<td><span class="badge ' + (srv.protocol || '') + '">' + dprEsc(srv.protocol || '—') + '</span></td>';
+        html += '<td>' + (isActive
+            ? '<span class="badge active">&#9654; <%:Active%></span>'
+            : '<span class="badge"><%:Inactive%></span>') + '</td>';
+        html += '<td>';
+        if (!isActive) {
+            html += '<button class="dpr-btn success" style="padding:4px 14px;margin-right:6px" ' +
+                'onclick="dprSetActive(\'' + dprEsc(srv.id) + '\')"><%:Activate%></button>';
+        }
+        html += '<button class="dpr-btn danger" style="padding:4px 14px" ' +
+            'onclick="dprDelete(\'' + dprEsc(srv.id) + '\',\'' + dprEsc(srv.name || srv.id) + '\')"><%:Delete%></button>';
+        html += '</td></tr>';
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function dprSetActive(id) {
+    var fd = new FormData();
+    fd.append('id', id);
+    fetch(DPR.base + '/set_active', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function() {
+            DPR.active = id;
+            setTimeout(dprRefreshStatus, 1500);
+        });
+}
+
+function dprDelete(id, name) {
+    if (!confirm('<%:Delete server%> "' + name + '"?')) return;
+    var fd = new FormData();
+    fd.append('id', id);
+    fetch(DPR.base + '/del_server', { method: 'POST', body: fd })
+        .then(function(r){ return r.json(); })
+        .then(function() {
+            DPR.servers = DPR.servers.filter(function(s){ return s.id !== id; });
+            if (DPR.active === id) DPR.active = '';
+            dprRenderList();
+            dprRefreshStatus();
+        });
+}
+
+function dprEsc(s) {
+    return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Инициализация ───────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    dprRefreshStatus();
+    dprLoadServers();
+    setInterval(dprRefreshStatus, 5000);
+});
+</script>
+
+<%+footer%>
