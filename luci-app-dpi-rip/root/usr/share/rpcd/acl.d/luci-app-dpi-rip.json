@@ -1,0 +1,22 @@
+{
+  "luci-app-dpi-rip": {
+    "description": "Grant unauthenticated access to DPI-RIP LuCI app",
+    "read": {
+      "uci": [ "dpi-rip" ],
+      "ubus": {
+        "luci-rpc": [ "getGroupMembers" ],
+        "session": [ "access", "list" ]
+      },
+      "file": {
+        "/var/log/dpi-rip*": [ "read" ],
+        "/etc/dpi-rip/*":    [ "read" ]
+      }
+    },
+    "write": {
+      "uci": [ "dpi-rip" ],
+      "file": {
+        "/etc/dpi-rip/*": [ "write" ]
+      }
+    }
+  }
+}
