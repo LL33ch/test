@@ -71,7 +71,7 @@ register_node() {
 		-H "X-API-Key: $API_KEY" \
 		-H "Content-Type: application/json" \
 		-d "$payload" \
-		"${PANEL_URL}/api/v1/node/register" 2>/dev/null)
+		"${PANEL_URL}/api/v1/nodes/register" 2>/dev/null)
 
 	if [ $? -ne 0 ] || [ -z "$response" ]; then
 		log_err "Registration failed — panel unreachable or rejected the request"
@@ -100,7 +100,7 @@ fetch_config() {
 	response=$(curl -sf --max-time "$TIMEOUT" \
 		-H "X-API-Key: $API_KEY" \
 		-H "X-Node-ID: $NODE_ID" \
-		"${PANEL_URL}/api/v1/node/config" 2>/dev/null)
+		"${PANEL_URL}/api/v1/config" 2>/dev/null)
 
 	if [ $? -ne 0 ] || [ -z "$response" ]; then
 		log_err "Failed to fetch config from panel"
