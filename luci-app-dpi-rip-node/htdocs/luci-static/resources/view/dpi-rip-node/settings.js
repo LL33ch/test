@@ -32,7 +32,7 @@ return view.extend({
 	},
 
 	render: function(data) {
-		var isRunning = data[1];
+		var isRunning = data[1] === true;
 		var m, s, o;
 
 		m = new form.Map('dpi-rip-node',
@@ -48,42 +48,54 @@ return view.extend({
 		o = s.option(form.DummyValue, '_svc', _('Service'));
 		o.renderWidget = function() {
 			return E('span', {
-				style: isRunning
+				'style': isRunning
 					? 'color:#28a745;font-weight:bold'
 					: 'color:#dc3545;font-weight:bold'
-			}, isRunning ? ('● ' + _('Running')) : ('● ' + _('Stopped')));
+			}, isRunning ? '● Running' : '● Stopped');
 		};
 
 		o = s.option(form.DummyValue, 'node_id', _('Node ID'));
 		o.cfgvalue = function(sid) {
 			var v = uci.get('dpi-rip-node', sid, 'node_id');
-			return v && v.length ? v : _('(not registered yet)');
+			return (v && v.length) ? v : _('(not registered yet)');
 		};
 
 		o = s.option(form.DummyValue, '_actions', _('Actions'));
-		o.renderWidget = ui.createHandlerFn(this, function() {
+		o.renderWidget = function() {
 			return E('div', {}, [
 				E('button', {
 					'class': 'btn cbi-button cbi-button-action',
 					'style': 'margin-right:6px',
-					'click': ui.createHandlerFn(this, function() {
-						return callCheck().then(function() {
+					'click': function(ev) {
+						var btn = ev.currentTarget;
+						btn.disabled = true;
+						callCheck().then(function() {
 							ui.addNotification(null,
 								E('p', _('Check cycle started in background')), 'info');
+							btn.disabled = false;
+						}, function(err) {
+							ui.addNotification(null, E('p', String(err)), 'danger');
+							btn.disabled = false;
 						});
-					})
+					}
 				}, _('Run check now')),
 				E('button', {
 					'class': 'btn cbi-button cbi-button-neutral',
-					'click': ui.createHandlerFn(this, function() {
-						return callRegister().then(function() {
+					'click': function(ev) {
+						var btn = ev.currentTarget;
+						btn.disabled = true;
+						callRegister().then(function() {
 							ui.addNotification(null,
-								E('p', _('Re-registration complete — reload page to see Node ID')), 'info');
+								E('p', _('Re-registration complete — reload to see Node ID')), 'info');
+							btn.disabled = false;
+						}, function(err) {
+							ui.addNotification(null, E('p', String(err)), 'danger');
+							btn.disabled = false;
 						});
-					})
+					}
 				}, _('Re-register'))
 			]);
-		});
+		};
 
 		// ── Connection ────────────────────────────────────────────────────────
 
