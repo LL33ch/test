@@ -72,6 +72,40 @@ fi
 
 ok "Files downloaded"
 
+# ── LuCI интерфейс ────────────────────────────────────────────────────────────
+
+LUCI_PKG="luci-app-dpi-rip-node"
+LUCI_BASE="/usr/lib/lua/luci"
+
+LUCI_AVAILABLE=false
+if opkg list-installed 2>/dev/null | grep -q "^luci "; then
+  LUCI_AVAILABLE=true
+fi
+
+if [ "$LUCI_AVAILABLE" = "true" ]; then
+  step "Installing LuCI interface"
+
+  mkdir -p "${LUCI_BASE}/controller" "${LUCI_BASE}/model/cbi"
+
+  fetch_luci() {
+    local src="$1" dst="$2"
+    wget -qO "$dst" "${REPO_RAW}/${LUCI_PKG}/files${src}" \
+      || die "Failed to download LuCI file: $src"
+  }
+
+  fetch_luci /usr/lib/lua/luci/controller/dpi_rip_node.lua \
+             "${LUCI_BASE}/controller/dpi_rip_node.lua"
+  fetch_luci /usr/lib/lua/luci/model/cbi/dpi_rip_node.lua \
+             "${LUCI_BASE}/model/cbi/dpi_rip_node.lua"
+
+  # Сбрасываем кэш LuCI чтобы новые страницы сразу появились
+  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache 2>/dev/null || true
+
+  ok "LuCI interface installed (Services → DPI-RIP Node)"
+else
+  warn "LuCI not detected — skipping web interface"
+fi
+
 # ── Права ─────────────────────────────────────────────────────────────────────
 
 step "Setting permissions"
@@ -104,11 +138,15 @@ fi
 printf "\n\033[1;32mInstallation complete!\033[0m\n\n"
 
 if [ -z "$PANEL_URL" ]; then
-  printf "Configure the node:\n\n"
-  printf "  uci set dpi-rip-node.settings.panel_url='https://YOUR_PANEL'\n"
-  printf "  uci set dpi-rip-node.settings.api_key='YOUR_API_KEY'\n"
-  printf "  uci commit dpi-rip-node\n"
-  printf "  /etc/init.d/dpi-rip-node enable && /etc/init.d/dpi-rip-node start\n\n"
+  if [ "$LUCI_AVAILABLE" = "true" ]; then
+    printf "Open LuCI: Services → DPI-RIP Node\n\n"
+  else
+    printf "Configure the node:\n\n"
+    printf "  uci set dpi-rip-node.settings.panel_url='https://YOUR_PANEL'\n"
+    printf "  uci set dpi-rip-node.settings.api_key='YOUR_API_KEY'\n"
+    printf "  uci commit dpi-rip-node\n"
+    printf "  /etc/init.d/dpi-rip-node enable && /etc/init.d/dpi-rip-node start\n\n"
+  fi
 else
   printf "  Status : /usr/sbin/dpi-rip-node status\n"
   printf "  Logs   : logread | grep dpi-rip\n"
