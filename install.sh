@@ -46,36 +46,75 @@ fi
 
 ok "Dependencies satisfied"
 
+# ── Утилита скачивания с прогресс-баром ──────────────────────────────────────
+
+# download URL DST — скачивает файл, показывает спиннер и итоговый размер
+download() {
+  local url="$1" dst="$2"
+  local name spin_pid bytes size_str
+
+  name="$(basename "$dst")"
+  mkdir -p "$(dirname "$dst")"
+
+  # Спиннер: обновляется раз в секунду (busybox sleep принимает только целые)
+  (
+    i=0
+    while true; do
+      case $((i % 4)) in
+        0) c='|' ;; 1) c='/' ;; 2) c='-' ;; 3) c='\' ;;
+      esac
+      printf "\r  \033[0;36m%s\033[0m %-38s" "$c" "$name"
+      i=$((i + 1))
+      sleep 1
+    done
+  ) &
+  spin_pid=$!
+
+  wget -qO "$dst" "$url" 2>/dev/null
+  local rc=$?
+
+  kill "$spin_pid" 2>/dev/null
+  wait "$spin_pid" 2>/dev/null
+
+  if [ "$rc" -ne 0 ]; then
+    printf "\r  \033[0;31m✗\033[0m %-38s \033[0;31m[FAILED]\033[0m\n" "$name"
+    die "Cannot download: $name"
+  fi
+
+  bytes=$(wc -c < "$dst" 2>/dev/null || echo 0)
+
+  if   [ "$bytes" -ge 1048576 ]; then
+    size_str=$(awk "BEGIN{printf \"%.1f MB\",$bytes/1048576}")
+  elif [ "$bytes" -ge 1024 ]; then
+    size_str=$(awk "BEGIN{printf \"%.1f KB\",$bytes/1024}")
+  else
+    size_str="${bytes} B"
+  fi
+
+  printf "\r  \033[0;32m✓\033[0m %-38s \033[1m[####################]\033[0m %s\n" \
+    "$name" "$size_str"
+}
+
 # ── Скачивание файлов ─────────────────────────────────────────────────────────
 
 step "Downloading package files"
 
 mkdir -p /etc/config /etc/init.d /etc/hotplug.d/iface /usr/sbin
 
-fetch() {
-  local src="$1" dst="$2"
-  wget -qO "$dst" "${REPO_RAW}/${PKG}/files${src}" \
-    || die "Failed to download: $src"
-}
-
-fetch /usr/sbin/dpi-rip-node               /usr/sbin/dpi-rip-node
-fetch /etc/init.d/dpi-rip-node             /etc/init.d/dpi-rip-node
-fetch /etc/hotplug.d/iface/30-dpi-rip-node /etc/hotplug.d/iface/30-dpi-rip-node
+download "${REPO_RAW}/${PKG}/files/usr/sbin/dpi-rip-node"               /usr/sbin/dpi-rip-node
+download "${REPO_RAW}/${PKG}/files/etc/init.d/dpi-rip-node"             /etc/init.d/dpi-rip-node
+download "${REPO_RAW}/${PKG}/files/etc/hotplug.d/iface/30-dpi-rip-node" /etc/hotplug.d/iface/30-dpi-rip-node
 
 # Конфиг не перезаписываем если уже есть (защита настроек при обновлении)
 if [ ! -f /etc/config/dpi-rip-node ]; then
-  fetch /etc/config/dpi-rip-node /etc/config/dpi-rip-node
-  ok "Config installed"
+  download "${REPO_RAW}/${PKG}/files/etc/config/dpi-rip-node" /etc/config/dpi-rip-node
 else
   warn "Config already exists — skipped (settings preserved)"
 fi
 
-ok "Files downloaded"
-
 # ── LuCI интерфейс ────────────────────────────────────────────────────────────
 
 LUCI_PKG="luci-app-dpi-rip-node"
-LUCI_BASE="/usr/lib/lua/luci"
 
 LUCI_AVAILABLE=false
 if opkg list-installed 2>/dev/null | grep -q "^luci "; then
@@ -85,24 +124,17 @@ fi
 if [ "$LUCI_AVAILABLE" = "true" ]; then
   step "Installing LuCI interface"
 
-  fetch_luci() {
-    local src="$1" dst="$2"
-    mkdir -p "$(dirname "$dst")"
-    wget -qO "$dst" "${REPO_RAW}/${LUCI_PKG}${src}" \
-      || die "Failed to download LuCI file: $src"
-  }
+  download "${REPO_RAW}/${LUCI_PKG}/htdocs/luci-static/resources/view/dpi-rip-node/settings.js" \
+           /www/luci-static/resources/view/dpi-rip-node/settings.js
 
-  fetch_luci /htdocs/luci-static/resources/view/dpi-rip-node/settings.js \
-             /www/luci-static/resources/view/dpi-rip-node/settings.js
+  download "${REPO_RAW}/${LUCI_PKG}/root/usr/share/luci/menu.d/luci-app-dpi-rip-node.json" \
+           /usr/share/luci/menu.d/luci-app-dpi-rip-node.json
 
-  fetch_luci /root/usr/share/luci/menu.d/luci-app-dpi-rip-node.json \
-             /usr/share/luci/menu.d/luci-app-dpi-rip-node.json
+  download "${REPO_RAW}/${LUCI_PKG}/root/usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json" \
+           /usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json
 
-  fetch_luci /root/usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json \
-             /usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json
-
-  fetch_luci /root/usr/libexec/rpcd/dpi-rip-node \
-             /usr/libexec/rpcd/dpi-rip-node
+  download "${REPO_RAW}/${LUCI_PKG}/root/usr/libexec/rpcd/dpi-rip-node" \
+           /usr/libexec/rpcd/dpi-rip-node
 
   chmod 755 /usr/libexec/rpcd/dpi-rip-node
 
@@ -112,7 +144,7 @@ if [ "$LUCI_AVAILABLE" = "true" ]; then
   # Сбрасываем кэш LuCI
   rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-* 2>/dev/null || true
 
-  ok "LuCI interface installed (Services → DPI-RIP Node)"
+  ok "LuCI interface ready  →  Services › DPI-RIP Node"
 else
   warn "LuCI not detected — skipping web interface"
 fi
