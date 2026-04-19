@@ -1,0 +1,27 @@
+#!/bin/sh
+
+case "$1" in
+	list)
+		printf '{"check":{},"register":{},"status":{}}\n'
+		;;
+	call)
+		case "$2" in
+			check)
+				/usr/sbin/dpi-rip-node check >/dev/null 2>&1 &
+				printf '{"result":"ok"}\n'
+				;;
+			register)
+				/usr/sbin/dpi-rip-node register >/dev/null 2>&1
+				printf '{"result":"ok"}\n'
+				;;
+			status)
+				running="false"
+				pgrep -f 'dpi-rip-node daemon' >/dev/null 2>&1 && running="true"
+				printf '{"running":%s}\n' "$running"
+				;;
+			*)
+				printf '{"error":"unknown method"}\n'
+				;;
+		esac
+		;;
+esac

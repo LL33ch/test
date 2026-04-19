@@ -20,20 +20,28 @@ endef
 
 define Package/luci-app-dpi-rip-node/description
   LuCI web interface for the dpi-rip-node monitoring agent.
-  Provides settings page under Services → DPI-RIP Node.
+  Provides Settings page under Services → DPI-RIP Node.
 endef
 
 define Build/Compile
 endef
 
 define Package/luci-app-dpi-rip-node/install
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
-	$(INSTALL_DATA) ./files/usr/lib/lua/luci/controller/dpi_rip_node.lua \
-		$(1)/usr/lib/lua/luci/controller/dpi_rip_node.lua
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/dpi-rip-node
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/dpi-rip-node/settings.js \
+		$(1)/www/luci-static/resources/view/dpi-rip-node/settings.js
 
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
-	$(INSTALL_DATA) ./files/usr/lib/lua/luci/model/cbi/dpi_rip_node.lua \
-		$(1)/usr/lib/lua/luci/model/cbi/dpi_rip_node.lua
+	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
+	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/luci-app-dpi-rip-node.json \
+		$(1)/usr/share/luci/menu.d/luci-app-dpi-rip-node.json
+
+	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d
+	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json \
+		$(1)/usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json
+
+	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
+	$(INSTALL_BIN) ./root/usr/libexec/rpcd/dpi-rip-node \
+		$(1)/usr/libexec/rpcd/dpi-rip-node
 endef
 
 $(eval $(call BuildPackage,luci-app-dpi-rip-node))

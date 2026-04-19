@@ -1,0 +1,22 @@
+{
+	"luci-app-dpi-rip-node": {
+		"description": "Grant access to DPI-RIP Node configuration",
+		"read": {
+			"ubus": {
+				"dpi-rip-node": [ "check", "register", "status" ],
+				"service": [ "list" ]
+			},
+			"uci": {
+				"dpi-rip-node": [ "*" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"dpi-rip-node": [ "check", "register" ]
+			},
+			"uci": {
+				"dpi-rip-node": [ "*" ]
+			}
+		}
+	}
+}

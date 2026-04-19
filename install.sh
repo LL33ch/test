@@ -85,21 +85,32 @@ fi
 if [ "$LUCI_AVAILABLE" = "true" ]; then
   step "Installing LuCI interface"
 
-  mkdir -p "${LUCI_BASE}/controller" "${LUCI_BASE}/model/cbi"
-
   fetch_luci() {
     local src="$1" dst="$2"
-    wget -qO "$dst" "${REPO_RAW}/${LUCI_PKG}/files${src}" \
+    mkdir -p "$(dirname "$dst")"
+    wget -qO "$dst" "${REPO_RAW}/${LUCI_PKG}${src}" \
       || die "Failed to download LuCI file: $src"
   }
 
-  fetch_luci /usr/lib/lua/luci/controller/dpi_rip_node.lua \
-             "${LUCI_BASE}/controller/dpi_rip_node.lua"
-  fetch_luci /usr/lib/lua/luci/model/cbi/dpi_rip_node.lua \
-             "${LUCI_BASE}/model/cbi/dpi_rip_node.lua"
+  fetch_luci /htdocs/luci-static/resources/view/dpi-rip-node/settings.js \
+             /www/luci-static/resources/view/dpi-rip-node/settings.js
 
-  # Сбрасываем кэш LuCI чтобы новые страницы сразу появились
-  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache 2>/dev/null || true
+  fetch_luci /root/usr/share/luci/menu.d/luci-app-dpi-rip-node.json \
+             /usr/share/luci/menu.d/luci-app-dpi-rip-node.json
+
+  fetch_luci /root/usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json \
+             /usr/share/rpcd/acl.d/luci-app-dpi-rip-node.json
+
+  fetch_luci /root/usr/libexec/rpcd/dpi-rip-node \
+             /usr/libexec/rpcd/dpi-rip-node
+
+  chmod 755 /usr/libexec/rpcd/dpi-rip-node
+
+  # Перезапускаем rpcd чтобы он подхватил новый ACL и плагин
+  /etc/init.d/rpcd restart 2>/dev/null || true
+
+  # Сбрасываем кэш LuCI
+  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-* 2>/dev/null || true
 
   ok "LuCI interface installed (Services → DPI-RIP Node)"
 else
