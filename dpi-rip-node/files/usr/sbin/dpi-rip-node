@@ -1,0 +1,289 @@
+#!/bin/sh
+#
+# dpi-rip-node — агент мониторинга интернет-ограничений для OpenWRT
+#
+# Команды:
+#   daemon    — запуск в режиме демона (используется init.d)
+#   check     — один цикл: получить конфиг → проверить → отправить
+#   register  — принудительная (пере)регистрация ноды в панели
+#   status    — показать текущие настройки
+
+CONFIG_NAME="dpi-rip-node"
+LOG_TAG="dpi-rip-node"
+
+# ── Логирование ────────────────────────────────────────────────────────────────
+
+log()     { logger -t "$LOG_TAG" "$*"; }
+log_err() { logger -t "$LOG_TAG" -p daemon.err "$*"; }
+
+# ── Конфиг ─────────────────────────────────────────────────────────────────────
+
+read_config() {
+	PANEL_URL=$(uci -q get ${CONFIG_NAME}.settings.panel_url)
+	API_KEY=$(uci -q get ${CONFIG_NAME}.settings.api_key)
+	NODE_ID=$(uci -q get ${CONFIG_NAME}.settings.node_id)
+	INTERVAL=$(uci -q get ${CONFIG_NAME}.settings.interval)
+	TIMEOUT=$(uci -q get ${CONFIG_NAME}.settings.timeout)
+
+	INTERVAL=${INTERVAL:-300}
+	TIMEOUT=${TIMEOUT:-10}
+
+	if [ -z "$PANEL_URL" ] || [ -z "$API_KEY" ]; then
+		log_err "panel_url and api_key are required — edit /etc/config/${CONFIG_NAME}"
+		exit 1
+	fi
+}
+
+# ── Утилиты ────────────────────────────────────────────────────────────────────
+
+# Миллисекунды через /proc/uptime (совместимо с busybox)
+ms_now() {
+	awk '{printf "%d", $1 * 1000}' /proc/uptime
+}
+
+iso_timestamp() {
+	date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+# Экранирование строки для JSON (заменяем кавычки и обратные слэши)
+json_str() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# ── Регистрация ноды ───────────────────────────────────────────────────────────
+
+register_node() {
+	local hostname model firmware payload response node_id
+
+	hostname=$(uci -q get system.@system[0].hostname 2>/dev/null \
+		|| cat /proc/sys/kernel/hostname 2>/dev/null \
+		|| echo "unknown")
+	model=$(cat /tmp/sysinfo/model 2>/dev/null || echo "unknown")
+	firmware=$(. /etc/openwrt_release 2>/dev/null \
+		&& echo "${DISTRIB_RELEASE:-unknown}" || echo "unknown")
+
+	payload=$(printf '{"hostname":"%s","model":"%s","firmware":"%s"}' \
+		"$(json_str "$hostname")" \
+		"$(json_str "$model")" \
+		"$(json_str "$firmware")")
+
+	response=$(curl -sf --max-time "$TIMEOUT" \
+		-H "X-API-Key: $API_KEY" \
+		-H "Content-Type: application/json" \
+		-d "$payload" \
+		"${PANEL_URL}/api/v1/node/register" 2>/dev/null)
+
+	if [ $? -ne 0 ] || [ -z "$response" ]; then
+		log_err "Registration failed — panel unreachable or rejected the request"
+		return 1
+	fi
+
+	node_id=$(echo "$response" | jsonfilter -e '@.node_id' 2>/dev/null)
+	if [ -z "$node_id" ]; then
+		log_err "Panel returned invalid registration response: $response"
+		return 1
+	fi
+
+	uci set ${CONFIG_NAME}.settings.node_id="$node_id"
+	uci commit ${CONFIG_NAME}
+	NODE_ID="$node_id"
+
+	log "Registered successfully, node_id=$node_id"
+	return 0
+}
+
+# ── Получение конфига проверок ─────────────────────────────────────────────────
+
+fetch_config() {
+	local response
+
+	response=$(curl -sf --max-time "$TIMEOUT" \
+		-H "X-API-Key: $API_KEY" \
+		-H "X-Node-ID: $NODE_ID" \
+		"${PANEL_URL}/api/v1/node/config" 2>/dev/null)
+
+	if [ $? -ne 0 ] || [ -z "$response" ]; then
+		log_err "Failed to fetch config from panel"
+		return 1
+	fi
+
+	echo "$response"
+}
+
+# ── Проверки ───────────────────────────────────────────────────────────────────
+
+# HTTPS-проверка одного домена.
+# Возвращает JSON-объект результата.
+check_http() {
+	local domain="$1"
+	local t_start t_end latency http_code accessible error
+
+	t_start=$(ms_now)
+
+	http_code=$(curl -so /dev/null \
+		--max-time "$TIMEOUT" \
+		--connect-timeout 5 \
+		-L \
+		-w "%{http_code}" \
+		"https://${domain}" 2>/dev/null)
+	local exit_code=$?
+
+	t_end=$(ms_now)
+	latency=$((t_end - t_start))
+
+	# Проверяем: curl завершился без ошибки И код HTTP числовой в диапазоне 1xx-5xx
+	if [ $exit_code -eq 0 ] && [ "$http_code" -ge 100 ] 2>/dev/null; then
+		accessible="true"
+		error="null"
+	else
+		accessible="false"
+		http_code=0
+		case $exit_code in
+			6)  error='"dns_failed"'       ;;
+			7)  error='"connection_refused"' ;;
+			28) error='"timeout"'          ;;
+			35) error='"ssl_error"'        ;;
+			*)  error='"unreachable"'      ;;
+		esac
+	fi
+
+	printf '{"domain":"%s","accessible":%s,"http_code":%d,"latency_ms":%d,"error":%s}' \
+		"$(json_str "$domain")" "$accessible" "$http_code" "$latency" "$error"
+}
+
+# DNS-проверка домена (опциональный дополнительный тест)
+check_dns() {
+	local domain="$1"
+	local t_start t_end latency resolved ip
+
+	t_start=$(ms_now)
+	# nslookup есть в busybox; выбираем первый A-адрес
+	ip=$(nslookup "$domain" 2>/dev/null \
+		| awk '/^Address [0-9]/{ip=$NF} END{print ip}')
+	t_end=$(ms_now)
+	latency=$((t_end - t_start))
+
+	[ -n "$ip" ] && resolved="true" || resolved="false"
+
+	printf '{"domain":"%s","resolved":%s,"latency_ms":%d}' \
+		"$(json_str "$domain")" "$resolved" "$latency"
+}
+
+# ── Цикл проверок ──────────────────────────────────────────────────────────────
+
+run_checks() {
+	local config="$1"
+	local results first domain result count
+
+	# Извлекаем все домены из массива targets
+	local domains
+	domains=$(echo "$config" | jsonfilter -e '@.targets[*].domain' 2>/dev/null)
+
+	if [ -z "$domains" ]; then
+		log_err "No targets received from panel"
+		return 1
+	fi
+
+	results="["
+	first=1
+	count=0
+
+	for domain in $domains; do
+		[ "$first" = "1" ] || results="${results},"
+		first=0
+
+		result=$(check_http "$domain")
+		results="${results}${result}"
+		count=$((count + 1))
+
+		log "$(echo "$result" | jsonfilter -e '@.accessible') ${domain} \
+(http=$(echo "$result" | jsonfilter -e '@.http_code') \
+lat=$(echo "$result" | jsonfilter -e '@.latency_ms')ms)"
+	done
+
+	results="${results}]"
+	log "Cycle done: checked $count targets"
+
+	echo "$results"
+}
+
+# ── Отправка результатов ───────────────────────────────────────────────────────
+
+send_results() {
+	local results="$1"
+	local timestamp payload
+
+	timestamp=$(iso_timestamp)
+	payload=$(printf '{"node_id":"%s","timestamp":"%s","results":%s}' \
+		"$(json_str "$NODE_ID")" "$timestamp" "$results")
+
+	curl -sf --max-time "$TIMEOUT" \
+		-H "X-API-Key: $API_KEY" \
+		-H "X-Node-ID: $NODE_ID" \
+		-H "Content-Type: application/json" \
+		-d "$payload" \
+		"${PANEL_URL}/api/v1/node/results" >/dev/null 2>&1
+
+	if [ $? -ne 0 ]; then
+		log_err "Failed to send results to panel"
+		return 1
+	fi
+
+	log "Results sent to panel"
+}
+
+# ── Один полный цикл ───────────────────────────────────────────────────────────
+
+run_cycle() {
+	# Если node_id ещё не получен — регистрируемся
+	if [ -z "$NODE_ID" ]; then
+		register_node || return 1
+	fi
+
+	local config results
+
+	config=$(fetch_config) || return 1
+	results=$(run_checks "$config") || return 1
+	send_results "$results"
+}
+
+# ── Режим демона ───────────────────────────────────────────────────────────────
+
+run_daemon() {
+	log "Started (interval=${INTERVAL}s, panel=${PANEL_URL})"
+
+	while true; do
+		# Перечитываем конфиг при каждой итерации — UCI мог измениться
+		read_config
+		run_cycle || log_err "Cycle failed, retrying in ${INTERVAL}s"
+		sleep "$INTERVAL"
+	done
+}
+
+# ── Точка входа ────────────────────────────────────────────────────────────────
+
+case "$1" in
+	daemon)
+		read_config
+		run_daemon
+		;;
+	check)
+		read_config
+		run_cycle
+		;;
+	register)
+		read_config
+		register_node
+		;;
+	status)
+		read_config
+		printf "panel_url : %s\n" "$PANEL_URL"
+		printf "node_id   : %s\n" "${NODE_ID:-<not registered>}"
+		printf "interval  : %ss\n" "$INTERVAL"
+		printf "timeout   : %ss\n" "$TIMEOUT"
+		;;
+	*)
+		echo "Usage: $0 {daemon|check|register|status}"
+		exit 1
+		;;
+esac

@@ -1,5 +1,0 @@
-config main
-	option enabled '0'
-	option active_sub ''
-	option active_remarks ''
-	option proxy_mode 'tproxy'

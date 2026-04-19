@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# Запускаем один цикл проверки при поднятии WAN-интерфейса.
+# Это позволяет зафиксировать первую доступность сразу после подключения,
+# не дожидаясь планового интервала.
+
+[ "$ACTION" = "ifup" ] || exit 0
+
+enabled=$(uci -q get dpi-rip-node.settings.enabled)
+[ "$enabled" = "0" ] && exit 0
+
+panel_url=$(uci -q get dpi-rip-node.settings.panel_url)
+[ -z "$panel_url" ] && exit 0
+
+# Запуск в фоне — не блокируем hotplug pipeline
+/usr/sbin/dpi-rip-node check &

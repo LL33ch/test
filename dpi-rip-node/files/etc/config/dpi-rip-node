@@ -1,0 +1,18 @@
+config settings 'settings'
+	# URL панели без trailing slash (например: https://panel.example.com)
+	option panel_url ''
+
+	# API-ключ, выдаётся при добавлении ноды в панели
+	option api_key ''
+
+	# ID ноды — заполняется автоматически при первой регистрации
+	option node_id ''
+
+	# Интервал между циклами проверки (секунды)
+	option interval '300'
+
+	# Таймаут одного HTTP-запроса (секунды)
+	option timeout '10'
+
+	# 0 — сервис отключён, 1 — включён
+	option enabled '1'
