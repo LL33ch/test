@@ -16,7 +16,9 @@ case "$1" in
 				;;
 			status)
 				running="false"
-				pgrep -f 'dpi-rip-node daemon' >/dev/null 2>&1 && running="true"
+				ubus call service list '{"name":"dpi-rip-node"}' 2>/dev/null \
+					| jsonfilter -e '@["dpi-rip-node"].instances.*.running' 2>/dev/null \
+					| grep -q 'true' && running="true"
 				printf '{"running":%s}\n' "$running"
 				;;
 			*)
