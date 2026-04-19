@@ -1,167 +1,116 @@
-#!/bin/bash
+#!/bin/sh
 #
-# Установка dpi-rip-node на роутер с OpenWRT
+# Установка dpi-rip-node на OpenWRT
+# Запускается прямо на роутере:
 #
-# Использование:
-#   ./install.sh [ROUTER_IP] [SSH_USER]
-#
-# Примеры:
-#   ./install.sh                      # 192.168.1.1, root
-#   ./install.sh 10.0.0.1
-#   ./install.sh 10.0.0.1 admin
+#   curl -fsSL https://raw.githubusercontent.com/LL33ch/test/refs/heads/main/install.sh | sh
 
-set -euo pipefail
+set -eu
 
-# ── Параметры ──────────────────────────────────────────────────────────────────
+REPO_RAW="https://raw.githubusercontent.com/LL33ch/test/refs/heads/main"
+PKG="dpi-rip-node"
 
-ROUTER="${1:-192.168.1.1}"
-SSH_USER="${2:-root}"
-PKG_DIR="$(cd "$(dirname "$0")/dpi-rip-node" && pwd)"
+# ── Вывод ─────────────────────────────────────────────────────────────────────
 
-SSH_OPTS="-o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
-SSH="${SSH_USER}@${ROUTER}"
+step() { printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }
+ok()   { printf "  \033[0;32m✓\033[0m %s\n" "$*"; }
+warn() { printf "  \033[1;33m!\033[0m %s\n" "$*"; }
+die()  { printf "\n\033[0;31m✗ %s\033[0m\n\n" "$*" >&2; exit 1; }
 
-# ── Цвета ──────────────────────────────────────────────────────────────────────
+# ── Проверка окружения ────────────────────────────────────────────────────────
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+step "Checking environment"
 
-step()  { echo -e "\n${CYAN}${BOLD}▶ $*${RESET}"; }
-ok()    { echo -e "  ${GREEN}✓${RESET} $*"; }
-warn()  { echo -e "  ${YELLOW}!${RESET} $*"; }
-die()   { echo -e "\n${RED}${BOLD}✗ $*${RESET}\n" >&2; exit 1; }
+[ -f /etc/openwrt_release ] || die "This script is for OpenWRT only"
+ok "OpenWRT detected"
 
-# ── Проверка окружения ─────────────────────────────────────────────────────────
+command -v wget >/dev/null || die "wget not found"
+command -v uci  >/dev/null || die "uci not found"
+command -v opkg >/dev/null || die "opkg not found"
 
-step "Checking prerequisites"
+# ── Зависимости ───────────────────────────────────────────────────────────────
 
-command -v ssh  >/dev/null || die "ssh not found"
-command -v scp  >/dev/null || die "scp not found"
+step "Checking dependencies"
 
-[ -d "$PKG_DIR/files" ] || die "Package directory not found: $PKG_DIR/files"
-ok "Package directory: $PKG_DIR"
+MISSING=""
+for dep in curl jsonfilter; do
+  opkg list-installed 2>/dev/null | grep -q "^${dep} " || MISSING="$MISSING $dep"
+done
 
-# ── Проверка подключения к роутеру ────────────────────────────────────────────
-
-step "Connecting to ${SSH} ..."
-
-ssh $SSH_OPTS "$SSH" "echo ok" >/dev/null 2>&1 \
-  || die "Cannot connect to ${SSH}. Check IP, SSH key / password, and that router is reachable."
-
-ok "Connected to $ROUTER"
-
-ROUTER_OS=$(ssh $SSH_OPTS "$SSH" "cat /etc/openwrt_release 2>/dev/null | grep DISTRIB_ID | cut -d= -f2 | tr -d '\"'" 2>/dev/null || true)
-[ -n "$ROUTER_OS" ] || die "This doesn't look like an OpenWRT device"
-ok "OS: $ROUTER_OS"
-
-# ── Установка зависимостей ────────────────────────────────────────────────────
-
-step "Checking dependencies on router"
-
-ssh $SSH_OPTS "$SSH" bash <<'REMOTE'
-  MISSING=""
-  for pkg in curl jsonfilter; do
-    if ! opkg list-installed 2>/dev/null | grep -q "^${pkg} "; then
-      MISSING="$MISSING $pkg"
-    fi
-  done
-
-  if [ -n "$MISSING" ]; then
-    echo "Installing:$MISSING"
-    opkg update -q 2>/dev/null || true
-    opkg install $MISSING || { echo "ERR: opkg install failed"; exit 1; }
-  else
-    echo "OK: all deps present"
-  fi
-REMOTE
+if [ -n "$MISSING" ]; then
+  warn "Installing:$MISSING"
+  opkg update -q 2>/dev/null || true
+  # shellcheck disable=SC2086
+  opkg install $MISSING || die "opkg install failed for:$MISSING"
+fi
 
 ok "Dependencies satisfied"
 
-# ── Остановка сервиса (если запущен) ─────────────────────────────────────────
+# ── Скачивание файлов ─────────────────────────────────────────────────────────
 
-step "Stopping existing service (if running)"
-ssh $SSH_OPTS "$SSH" \
-  "/etc/init.d/dpi-rip-node stop 2>/dev/null; /etc/init.d/dpi-rip-node disable 2>/dev/null; true" \
-  >/dev/null 2>&1 || true
-ok "Service stopped"
+step "Downloading package files"
 
-# ── Копирование файлов ────────────────────────────────────────────────────────
+mkdir -p /etc/config /etc/init.d /etc/hotplug.d/iface /usr/sbin
 
-step "Copying package files"
+fetch() {
+  local src="$1" dst="$2"
+  wget -qO "$dst" "${REPO_RAW}/${PKG}/files${src}" \
+    || die "Failed to download: $src"
+}
 
-# Создаём директории на роутере
-ssh $SSH_OPTS "$SSH" \
-  "mkdir -p /etc/config /etc/init.d /etc/hotplug.d/iface /usr/sbin"
+fetch /usr/sbin/dpi-rip-node               /usr/sbin/dpi-rip-node
+fetch /etc/init.d/dpi-rip-node             /etc/init.d/dpi-rip-node
+fetch /etc/hotplug.d/iface/30-dpi-rip-node /etc/hotplug.d/iface/30-dpi-rip-node
 
-# Копируем файлы через scp
-scp $SSH_OPTS \
-  "$PKG_DIR/files/etc/init.d/dpi-rip-node" \
-  "${SSH}:/etc/init.d/dpi-rip-node"
-
-scp $SSH_OPTS \
-  "$PKG_DIR/files/etc/hotplug.d/iface/30-dpi-rip-node" \
-  "${SSH}:/etc/hotplug.d/iface/30-dpi-rip-node"
-
-scp $SSH_OPTS \
-  "$PKG_DIR/files/usr/sbin/dpi-rip-node" \
-  "${SSH}:/usr/sbin/dpi-rip-node"
-
-# UCI конфиг — копируем только если ещё нет (не перезатираем настройки)
-CONFIG_EXISTS=$(ssh $SSH_OPTS "$SSH" \
-  "[ -f /etc/config/dpi-rip-node ] && echo yes || echo no" 2>/dev/null)
-
-if [ "$CONFIG_EXISTS" = "no" ]; then
-  scp $SSH_OPTS \
-    "$PKG_DIR/files/etc/config/dpi-rip-node" \
-    "${SSH}:/etc/config/dpi-rip-node"
-  ok "Config installed (first time)"
+# Конфиг не перезаписываем если уже есть (защита настроек при обновлении)
+if [ ! -f /etc/config/dpi-rip-node ]; then
+  fetch /etc/config/dpi-rip-node /etc/config/dpi-rip-node
+  ok "Config installed"
 else
-  warn "Config already exists — skipped (use --reset-config to overwrite)"
+  warn "Config already exists — skipped (settings preserved)"
 fi
 
-ok "Files copied"
+ok "Files downloaded"
 
-# ── Выставляем права ──────────────────────────────────────────────────────────
+# ── Права ─────────────────────────────────────────────────────────────────────
 
 step "Setting permissions"
-ssh $SSH_OPTS "$SSH" bash <<'REMOTE'
-  chmod 755 /etc/init.d/dpi-rip-node
-  chmod 755 /etc/hotplug.d/iface/30-dpi-rip-node
-  chmod 755 /usr/sbin/dpi-rip-node
-  chmod 600 /etc/config/dpi-rip-node
-REMOTE
+
+chmod 755 /usr/sbin/dpi-rip-node
+chmod 755 /etc/init.d/dpi-rip-node
+chmod 755 /etc/hotplug.d/iface/30-dpi-rip-node
+chmod 600 /etc/config/dpi-rip-node
+
 ok "Permissions set"
 
-# ── Включаем и запускаем сервис ───────────────────────────────────────────────
+# ── Сервис ────────────────────────────────────────────────────────────────────
 
 step "Enabling service"
 
-PANEL_URL=$(ssh $SSH_OPTS "$SSH" \
-  "uci -q get dpi-rip-node.settings.panel_url || true" 2>/dev/null)
+/etc/init.d/dpi-rip-node disable 2>/dev/null || true
+
+PANEL_URL=$(uci -q get dpi-rip-node.settings.panel_url 2>/dev/null || true)
 
 if [ -z "$PANEL_URL" ]; then
-  warn "panel_url is not set — service will NOT start until configured"
-  warn ""
-  warn "Configure on the router:"
-  warn "  ssh ${SSH}"
-  warn "  uci set dpi-rip-node.settings.panel_url='https://YOUR_PANEL'"
-  warn "  uci set dpi-rip-node.settings.api_key='YOUR_KEY'"
-  warn "  uci commit dpi-rip-node"
-  warn "  /etc/init.d/dpi-rip-node enable && /etc/init.d/dpi-rip-node start"
+  warn "panel_url not configured — service will start after setup"
 else
-  ssh $SSH_OPTS "$SSH" \
-    "/etc/init.d/dpi-rip-node enable && /etc/init.d/dpi-rip-node start"
+  /etc/init.d/dpi-rip-node enable
+  /etc/init.d/dpi-rip-node start
   ok "Service enabled and started"
 fi
 
-# ── Итог ─────────────────────────────────────────────────────────────────────
+# ── Готово ────────────────────────────────────────────────────────────────────
 
-echo
-echo -e "${GREEN}${BOLD}Installation complete!${RESET}"
-echo
-echo -e "  Router     : ${CYAN}${ROUTER}${RESET}"
-echo -e "  SSH        : ${CYAN}${SSH}${RESET}"
-echo -e "  Status     : ssh ${SSH} '/usr/sbin/dpi-rip-node status'"
-echo -e "  Logs       : ssh ${SSH} 'logread | grep dpi-rip'"
-echo -e "  Manual run : ssh ${SSH} '/usr/sbin/dpi-rip-node check'"
-echo
+printf "\n\033[1;32mInstallation complete!\033[0m\n\n"
+
+if [ -z "$PANEL_URL" ]; then
+  printf "Configure the node:\n\n"
+  printf "  uci set dpi-rip-node.settings.panel_url='https://YOUR_PANEL'\n"
+  printf "  uci set dpi-rip-node.settings.api_key='YOUR_API_KEY'\n"
+  printf "  uci commit dpi-rip-node\n"
+  printf "  /etc/init.d/dpi-rip-node enable && /etc/init.d/dpi-rip-node start\n\n"
+else
+  printf "  Status : /usr/sbin/dpi-rip-node status\n"
+  printf "  Logs   : logread | grep dpi-rip\n"
+  printf "  Run    : /usr/sbin/dpi-rip-node check\n\n"
+fi
