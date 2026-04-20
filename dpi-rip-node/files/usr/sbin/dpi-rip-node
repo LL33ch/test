@@ -385,13 +385,18 @@ HEARTBEAT_PID_FILE="/var/run/dpi-rip-node-hb.pid"
 run_daemon() {
 	log "Started (interval=${INTERVAL}s, panel=${PANEL_URL})"
 
-	# Убиваем остатки предыдущего запуска — иначе будут дубли фоновых процессов
-	local old_pid
-	old_pid=$(cat "$SSE_PID_FILE" 2>/dev/null)
-	[ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
-	old_pid=$(cat "$HEARTBEAT_PID_FILE" 2>/dev/null)
-	[ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
-	rm -f "$SSE_PID_FILE" "$HEARTBEAT_PID_FILE"
+	# Убиваем ВСЕ старые процессы нашего скрипта — включая осиротевшие дочерние
+	local f pid
+	for f in /proc/[0-9]*/cmdline; do
+		[ -f "$f" ] || continue
+		pid="${f%/cmdline}"
+		pid="${pid#/proc/}"
+		[ "$pid" = "$$" ] && continue
+		[ "$pid" = "$PPID" ] && continue
+		tr '\0' ' ' < "$f" 2>/dev/null | grep -q "dpi-rip-node" || continue
+		kill "$pid" 2>/dev/null || true
+	done
+	rm -f "$SSE_PID_FILE" "$HEARTBEAT_PID_FILE" "$LOCK_FILE"
 
 	# Убеждаемся что нода зарегистрирована перед стартом фоновых процессов
 	if [ -z "$NODE_ID" ]; then
