@@ -309,12 +309,12 @@ listen_events() {
 	url="${panel_url}/api/v1/nodes/${node_id}/stream"
 	log "SSE connecting to $url"
 
-	# curl -N отключает буферизацию — строки приходят сразу
-	curl -sfN --no-buffer \
+	# Без -f чтобы curl не выходил при HTTP ошибках (иначе 4xx убивает соединение)
+	curl -sN --no-buffer \
 		--max-time 0 \
 		-H "X-API-Key: $api_key" \
 		-H "X-Node-ID: $node_id" \
-		"$url" 2>/dev/null | while IFS= read -r line; do
+		"$url" 2>&1 | while IFS= read -r line; do
 
 		# SSE формат: строки начинаются с "data: "
 		echo "$line" | grep -q '^data:' || continue
@@ -346,7 +346,7 @@ send_heartbeat() {
 	panel_url=$(uci -q get ${CONFIG_NAME}.settings.panel_url 2>/dev/null || true)
 	api_key=$(uci -q get ${CONFIG_NAME}.settings.api_key 2>/dev/null || true)
 
-	[ -z "$node_id" ] || [ -z "$panel_url" ] && return 0
+	{ [ -z "$node_id" ] || [ -z "$panel_url" ]; } && return 0
 
 	curl -sf --max-time 10 \
 		-H "X-API-Key: $api_key" \
@@ -366,6 +366,12 @@ run_heartbeat_loop() {
 
 run_sse_loop() {
 	while true; do
+		local node_id
+		node_id=$(uci -q get ${CONFIG_NAME}.settings.node_id 2>/dev/null || true)
+		if [ -z "$node_id" ]; then
+			sleep 10
+			continue
+		fi
 		listen_events
 		log_err "SSE stream disconnected, reconnecting in 30s"
 		sleep 30
