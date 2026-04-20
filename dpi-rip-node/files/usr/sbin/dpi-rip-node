@@ -386,16 +386,16 @@ run_daemon() {
 	log "Started (interval=${INTERVAL}s, panel=${PANEL_URL})"
 
 	# Убиваем ВСЕ старые процессы нашего скрипта — включая осиротевшие дочерние
-	local f pid
-	for f in /proc/[0-9]*/cmdline; do
-		[ -f "$f" ] || continue
-		pid="${f%/cmdline}"
-		pid="${pid#/proc/}"
-		[ "$pid" = "$$" ] && continue
-		[ "$pid" = "$PPID" ] && continue
-		tr '\0' ' ' < "$f" 2>/dev/null | grep -q "dpi-rip-node" || continue
-		kill "$pid" 2>/dev/null || true
+	local _f _p
+	for _f in /proc/[0-9]*/cmdline; do
+		[ -f "$_f" ] || continue
+		_p="${_f%/cmdline}"; _p="${_p#/proc/}"
+		[ "$_p" = "$$" ]   && continue
+		[ "$_p" = "$PPID" ] && continue
+		tr '\0' ' ' < "$_f" 2>/dev/null | grep -q "dpi-rip-node" || continue
+		kill -9 "$_p" 2>/dev/null || true
 	done
+	sleep 1
 	rm -f "$SSE_PID_FILE" "$HEARTBEAT_PID_FILE" "$LOCK_FILE"
 
 	# Убеждаемся что нода зарегистрирована перед стартом фоновых процессов
