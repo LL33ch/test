@@ -294,14 +294,25 @@ run_cycle() {
 # ── SSE: слушатель команд от панели ───────────────────────────────────────────
 
 listen_events() {
-	local url="${PANEL_URL}/api/v1/nodes/${NODE_ID}/stream"
+	# Читаем из UCI напрямую — фоновый процесс не видит переменные основного
+	local node_id panel_url api_key url
+	node_id=$(uci -q get ${CONFIG_NAME}.settings.node_id 2>/dev/null || true)
+	panel_url=$(uci -q get ${CONFIG_NAME}.settings.panel_url 2>/dev/null || true)
+	api_key=$(uci -q get ${CONFIG_NAME}.settings.api_key 2>/dev/null || true)
+
+	if [ -z "$node_id" ]; then
+		log_err "SSE: node_id not set yet, skipping"
+		return 1
+	fi
+
+	url="${panel_url}/api/v1/nodes/${node_id}/stream"
 	log "SSE connecting to $url"
 
 	# curl -N отключает буферизацию — строки приходят сразу
 	curl -sfN --no-buffer \
 		--max-time 0 \
-		-H "X-API-Key: $API_KEY" \
-		-H "X-Node-ID: $NODE_ID" \
+		-H "X-API-Key: $api_key" \
+		-H "X-Node-ID: $node_id" \
 		"$url" 2>/dev/null | while IFS= read -r line; do
 
 		# SSE формат: строки начинаются с "data: "
@@ -329,11 +340,18 @@ listen_events() {
 # ── Heartbeat ─────────────────────────────────────────────────────────────────
 
 send_heartbeat() {
+	local node_id panel_url api_key
+	node_id=$(uci -q get ${CONFIG_NAME}.settings.node_id 2>/dev/null || true)
+	panel_url=$(uci -q get ${CONFIG_NAME}.settings.panel_url 2>/dev/null || true)
+	api_key=$(uci -q get ${CONFIG_NAME}.settings.api_key 2>/dev/null || true)
+
+	[ -z "$node_id" ] || [ -z "$panel_url" ] && return 0
+
 	curl -sf --max-time 10 \
-		-H "X-API-Key: $API_KEY" \
-		-H "X-Node-ID: $NODE_ID" \
+		-H "X-API-Key: $api_key" \
+		-H "X-Node-ID: $node_id" \
 		-X POST \
-		"${PANEL_URL}/api/v1/nodes/heartbeat" >/dev/null 2>&1
+		"${panel_url}/api/v1/nodes/heartbeat" >/dev/null 2>&1
 }
 
 run_heartbeat_loop() {
