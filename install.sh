@@ -10,6 +10,16 @@ REPO_RAW="https://raw.githubusercontent.com/LL33ch/test/refs/heads/main"
 PKG="dpi-rip-node"
 LUCI_PKG="luci-app-dpi-rip-node"
 
+# ── Аргументы командной строки ────────────────────────────────────────────────
+
+for arg in "$@"; do
+  case "$arg" in
+    --panel-url=*) PANEL_URL="${arg#*=}" ;;
+    --api-key=*)   API_KEY="${arg#*=}"   ;;
+    *) printf "Unknown argument: %s\n" "$arg" >&2; exit 1 ;;
+  esac
+done
+
 # ── Вывод ─────────────────────────────────────────────────────────────────────
 
 step() { printf "\n\033[1;36m▶ %s\033[0m\n" "$*"; }
