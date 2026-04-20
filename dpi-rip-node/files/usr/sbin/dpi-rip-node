@@ -146,12 +146,13 @@ register_node() {
 # ── Получение конфига проверок ─────────────────────────────────────────────────
 
 fetch_config() {
-	local response
+	local response node_id
+	node_id=$(uci -q get ${CONFIG_NAME}.settings.node_id 2>/dev/null || true)
 
 	response=$(curl -sf --max-time "$TIMEOUT" \
 		-H "X-API-Key: $API_KEY" \
-		-H "X-Node-ID: $NODE_ID" \
-		"${PANEL_URL}/api/v1/nodes/config" 2>/dev/null)
+		-H "X-Node-ID: $node_id" \
+		"${PANEL_URL}/api/v1/config" 2>/dev/null)
 
 	if [ $? -ne 0 ] || [ -z "$response" ]; then
 		log_err "Failed to fetch config from panel"
@@ -377,6 +378,14 @@ HEARTBEAT_PID_FILE="/var/run/dpi-rip-node-hb.pid"
 
 run_daemon() {
 	log "Started (interval=${INTERVAL}s, panel=${PANEL_URL})"
+
+	# Убиваем остатки предыдущего запуска — иначе будут дубли фоновых процессов
+	local old_pid
+	old_pid=$(cat "$SSE_PID_FILE" 2>/dev/null)
+	[ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
+	old_pid=$(cat "$HEARTBEAT_PID_FILE" 2>/dev/null)
+	[ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
+	rm -f "$SSE_PID_FILE" "$HEARTBEAT_PID_FILE"
 
 	# Убеждаемся что нода зарегистрирована перед стартом фоновых процессов
 	if [ -z "$NODE_ID" ]; then
