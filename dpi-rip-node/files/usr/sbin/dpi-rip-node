@@ -10,6 +10,8 @@
 
 CONFIG_NAME="dpi-rip-node"
 LOG_TAG="dpi-rip-node"
+LOCK_FILE="/var/run/dpi-rip-node.lock"
+SSE_PID_FILE="/var/run/dpi-rip-node-sse.pid"
 
 # ── Логирование ────────────────────────────────────────────────────────────────
 
@@ -36,7 +38,6 @@ read_config() {
 
 # ── Утилиты ────────────────────────────────────────────────────────────────────
 
-# Миллисекунды через /proc/uptime (совместимо с busybox)
 ms_now() {
 	awk '{printf "%d", $1 * 1000}' /proc/uptime
 }
@@ -45,15 +46,53 @@ iso_timestamp() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
-# Экранирование строки для JSON (заменяем кавычки и обратные слэши)
 json_str() {
 	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+# ── Блокировка (защита от параллельных циклов) ─────────────────────────────────
+
+lock_acquire() {
+	if [ -f "$LOCK_FILE" ]; then
+		local pid
+		pid=$(cat "$LOCK_FILE" 2>/dev/null)
+		# Если процесс уже не существует — замок устарел, удаляем
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			return 1  # Цикл уже выполняется
+		fi
+	fi
+	echo $$ > "$LOCK_FILE"
+	return 0
+}
+
+lock_release() {
+	rm -f "$LOCK_FILE"
+}
+
 # ── Регистрация ноды ───────────────────────────────────────────────────────────
 
+get_mac_address() {
+	local mac iface
+
+	# Перебираем интерфейсы в порядке приоритета
+	for iface in eth0 eth1 br-lan; do
+		mac=$(cat "/sys/class/net/${iface}/address" 2>/dev/null)
+		# Пропускаем пустые и нулевые адреса
+		[ -n "$mac" ] && [ "$mac" != "00:00:00:00:00:00" ] && {
+			printf '%s' "$mac"
+			return
+		}
+	done
+
+	# Fallback — первый не-loopback интерфейс
+	ip link 2>/dev/null \
+		| awk '/ether/{print $2}' \
+		| grep -v '00:00:00:00:00:00' \
+		| head -1
+}
+
 register_node() {
-	local hostname model firmware payload response node_id
+	local hostname model firmware mac payload response node_id
 
 	hostname=$(uci -q get system.@system[0].hostname 2>/dev/null \
 		|| cat /proc/sys/kernel/hostname 2>/dev/null \
@@ -61,11 +100,13 @@ register_node() {
 	model=$(cat /tmp/sysinfo/model 2>/dev/null || echo "unknown")
 	firmware=$(. /etc/openwrt_release 2>/dev/null \
 		&& echo "${DISTRIB_RELEASE:-unknown}" || echo "unknown")
+	mac=$(get_mac_address)
 
-	payload=$(printf '{"hostname":"%s","model":"%s","firmware":"%s"}' \
+	payload=$(printf '{"hostname":"%s","model":"%s","firmware":"%s","mac":"%s"}' \
 		"$(json_str "$hostname")" \
 		"$(json_str "$model")" \
-		"$(json_str "$firmware")")
+		"$(json_str "$firmware")" \
+		"$(json_str "$mac")")
 
 	response=$(curl -sf --max-time "$TIMEOUT" \
 		-H "X-API-Key: $API_KEY" \
@@ -100,7 +141,7 @@ fetch_config() {
 	response=$(curl -sf --max-time "$TIMEOUT" \
 		-H "X-API-Key: $API_KEY" \
 		-H "X-Node-ID: $NODE_ID" \
-		"${PANEL_URL}/api/v1/config" 2>/dev/null)
+		"${PANEL_URL}/api/v1/nodes/config" 2>/dev/null)
 
 	if [ $? -ne 0 ] || [ -z "$response" ]; then
 		log_err "Failed to fetch config from panel"
@@ -112,8 +153,6 @@ fetch_config() {
 
 # ── Проверки ───────────────────────────────────────────────────────────────────
 
-# HTTPS-проверка одного домена.
-# Возвращает JSON-объект результата.
 check_http() {
 	local domain="$1"
 	local t_start t_end latency http_code accessible error
@@ -131,7 +170,6 @@ check_http() {
 	t_end=$(ms_now)
 	latency=$((t_end - t_start))
 
-	# Проверяем: curl завершился без ошибки И код HTTP числовой в диапазоне 1xx-5xx
 	if [ $exit_code -eq 0 ] && [ "$http_code" -ge 100 ] 2>/dev/null; then
 		accessible="true"
 		error="null"
@@ -139,34 +177,16 @@ check_http() {
 		accessible="false"
 		http_code=0
 		case $exit_code in
-			6)  error='"dns_failed"'       ;;
+			6)  error='"dns_failed"'        ;;
 			7)  error='"connection_refused"' ;;
-			28) error='"timeout"'          ;;
-			35) error='"ssl_error"'        ;;
-			*)  error='"unreachable"'      ;;
+			28) error='"timeout"'           ;;
+			35) error='"ssl_error"'         ;;
+			*)  error='"unreachable"'       ;;
 		esac
 	fi
 
 	printf '{"domain":"%s","accessible":%s,"http_code":%d,"latency_ms":%d,"error":%s}' \
 		"$(json_str "$domain")" "$accessible" "$http_code" "$latency" "$error"
-}
-
-# DNS-проверка домена (опциональный дополнительный тест)
-check_dns() {
-	local domain="$1"
-	local t_start t_end latency resolved ip
-
-	t_start=$(ms_now)
-	# nslookup есть в busybox; выбираем первый A-адрес
-	ip=$(nslookup "$domain" 2>/dev/null \
-		| awk '/^Address [0-9]/{ip=$NF} END{print ip}')
-	t_end=$(ms_now)
-	latency=$((t_end - t_start))
-
-	[ -n "$ip" ] && resolved="true" || resolved="false"
-
-	printf '{"domain":"%s","resolved":%s,"latency_ms":%d}' \
-		"$(json_str "$domain")" "$resolved" "$latency"
 }
 
 # ── Цикл проверок ──────────────────────────────────────────────────────────────
@@ -175,7 +195,6 @@ run_checks() {
 	local config="$1"
 	local results first domain result count
 
-	# Извлекаем все домены из массива targets
 	local domains
 	domains=$(echo "$config" | jsonfilter -e '@.targets[*].domain' 2>/dev/null)
 
@@ -222,7 +241,7 @@ send_results() {
 		-H "X-Node-ID: $NODE_ID" \
 		-H "Content-Type: application/json" \
 		-d "$payload" \
-		"${PANEL_URL}/api/v1/node/results" >/dev/null 2>&1
+		"${PANEL_URL}/api/v1/nodes/results" >/dev/null 2>&1
 
 	if [ $? -ne 0 ]; then
 		log_err "Failed to send results to panel"
@@ -232,28 +251,128 @@ send_results() {
 	log "Results sent to panel"
 }
 
-# ── Один полный цикл ───────────────────────────────────────────────────────────
+# ── Один полный цикл (с блокировкой) ──────────────────────────────────────────
 
 run_cycle() {
-	# Если node_id ещё не получен — регистрируемся
 	if [ -z "$NODE_ID" ]; then
 		register_node || return 1
 	fi
 
-	local config results
+	if ! lock_acquire; then
+		log "Check already running, skipping"
+		return 0
+	fi
 
-	config=$(fetch_config) || return 1
-	results=$(run_checks "$config") || return 1
-	send_results "$results"
+	local config results
+	config=$(fetch_config)
+	local rc=$?
+
+	if [ $rc -eq 0 ]; then
+		results=$(run_checks "$config")
+		rc=$?
+	fi
+
+	if [ $rc -eq 0 ]; then
+		send_results "$results"
+		rc=$?
+	fi
+
+	lock_release
+	return $rc
+}
+
+# ── SSE: слушатель команд от панели ───────────────────────────────────────────
+
+listen_events() {
+	local url="${PANEL_URL}/api/v1/nodes/${NODE_ID}/stream"
+	log "SSE connecting to $url"
+
+	# curl -N отключает буферизацию — строки приходят сразу
+	curl -sfN --no-buffer \
+		--max-time 0 \
+		-H "X-API-Key: $API_KEY" \
+		-H "X-Node-ID: $NODE_ID" \
+		"$url" 2>/dev/null | while IFS= read -r line; do
+
+		# SSE формат: строки начинаются с "data: "
+		echo "$line" | grep -q '^data:' || continue
+
+		event=$(echo "$line" | sed 's/^data: *//')
+		type=$(echo "$event" | jsonfilter -e '@.type' 2>/dev/null)
+
+		case "$type" in
+			check)
+				log "SSE: check triggered by panel"
+				read_config
+				run_cycle || log_err "SSE-triggered check failed"
+				;;
+			config_updated)
+				log "SSE: config updated on panel, will apply on next cycle"
+				;;
+			*)
+				[ -n "$type" ] && log_err "SSE: unknown event type: $type"
+				;;
+		esac
+	done
+}
+
+# ── Heartbeat ─────────────────────────────────────────────────────────────────
+
+send_heartbeat() {
+	curl -sf --max-time 10 \
+		-H "X-API-Key: $API_KEY" \
+		-H "X-Node-ID: $NODE_ID" \
+		-X POST \
+		"${PANEL_URL}/api/v1/nodes/heartbeat" >/dev/null 2>&1
+}
+
+run_heartbeat_loop() {
+	while true; do
+		send_heartbeat
+		sleep 60
+	done
+}
+
+# ── SSE: автоматическое переподключение ────────────────────────────────────────
+
+run_sse_loop() {
+	while true; do
+		listen_events
+		log_err "SSE stream disconnected, reconnecting in 30s"
+		sleep 30
+	done
 }
 
 # ── Режим демона ───────────────────────────────────────────────────────────────
 
+HEARTBEAT_PID_FILE="/var/run/dpi-rip-node-hb.pid"
+
 run_daemon() {
 	log "Started (interval=${INTERVAL}s, panel=${PANEL_URL})"
 
+	# Убеждаемся что нода зарегистрирована перед стартом фоновых процессов
+	if [ -z "$NODE_ID" ]; then
+		register_node || log_err "Initial registration failed, will retry in cycle"
+	fi
+
+	# Heartbeat в фоне
+	run_heartbeat_loop &
+	echo $! > "$HEARTBEAT_PID_FILE"
+
+	# SSE-слушатель в фоне
+	run_sse_loop &
+	echo $! > "$SSE_PID_FILE"
+
+	# Корректная остановка фоновых процессов при завершении
+	trap '
+		kill $(cat "$SSE_PID_FILE" 2>/dev/null) 2>/dev/null
+		kill $(cat "$HEARTBEAT_PID_FILE" 2>/dev/null) 2>/dev/null
+		lock_release
+		exit 0
+	' TERM INT
+
+	# Периодический цикл — страховка если SSE не работает
 	while true; do
-		# Перечитываем конфиг при каждой итерации — UCI мог измениться
 		read_config
 		run_cycle || log_err "Cycle failed, retrying in ${INTERVAL}s"
 		sleep "$INTERVAL"
