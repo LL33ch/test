@@ -159,15 +159,32 @@ if [ "$LUCI_AVAILABLE" = "true" ]; then
   rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-* 2>/dev/null || true
 fi
 
+# ── Конфигурация из переменных окружения ─────────────────────────────────────
+
+# Переменные PANEL_URL и API_KEY могут быть переданы при запуске:
+#   PANEL_URL=https://... API_KEY=xxx curl ... | sh
+
+if [ -n "${PANEL_URL:-}" ]; then
+  uci set dpi-rip-node.settings.panel_url="$PANEL_URL"
+fi
+
+if [ -n "${API_KEY:-}" ]; then
+  uci set dpi-rip-node.settings.api_key="$API_KEY"
+fi
+
+if [ -n "${PANEL_URL:-}" ] || [ -n "${API_KEY:-}" ]; then
+  uci commit dpi-rip-node
+fi
+
 # ── Сервис ────────────────────────────────────────────────────────────────────
 
 step "Enabling service"
 
 /etc/init.d/dpi-rip-node disable 2>/dev/null || true
 
-PANEL_URL=$(uci -q get dpi-rip-node.settings.panel_url 2>/dev/null || true)
+CONFIGURED_URL=$(uci -q get dpi-rip-node.settings.panel_url 2>/dev/null || true)
 
-if [ -z "$PANEL_URL" ]; then
+if [ -z "$CONFIGURED_URL" ]; then
   warn "panel_url not configured — service will start after setup"
 else
   /etc/init.d/dpi-rip-node enable
@@ -179,7 +196,7 @@ fi
 
 printf "\n\033[1;32mInstallation complete!\033[0m\n\n"
 
-if [ -z "$PANEL_URL" ]; then
+if [ -z "$CONFIGURED_URL" ]; then
   if [ "$LUCI_AVAILABLE" = "true" ]; then
     printf "  Open LuCI: Services → DPI-RIP Node\n\n"
   else
